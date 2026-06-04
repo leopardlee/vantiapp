@@ -1,11 +1,11 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { ArrowLeft, MapPin, Star, Phone, Globe, Clock, Navigation, Sparkles, Bookmark, UserCircle, Share2, Award, Zap, X, Calendar, Compass, Eye, Info, Sliders, ThumbsUp, ThumbsDown, Volume2, Timer, ChevronDown, ChevronUp, ChevronRight, Check, Loader2, Plus } from 'lucide-react';
+import { ArrowLeft, MapPin, Star, Phone, Globe, Clock, Navigation, Sparkles, Bookmark, UserCircle, Share2, Award, Zap, X, Calendar, Compass, Eye, Info, Sliders, ThumbsUp, ThumbsDown, Volume2, Timer, ChevronDown, ChevronUp, ChevronRight, Check, Loader2, Plus, BookOpen, Camera, Trash2, Edit } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import FocusLock from 'react-focus-lock';
 import { cn } from '../lib/utils';
 import { useMapsLibrary } from '@vis.gl/react-google-maps';
 import { User } from 'firebase/auth';
-import { doc, getDoc, setDoc, deleteDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, deleteDoc, collection, query, orderBy, onSnapshot } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import * as d3 from 'd3';
 import { useVantiStore } from '../store/vantiStore';
@@ -175,6 +175,100 @@ const PlaceDetailsPanel = React.memo(function PlaceDetailsPanel({ place, onBack,
   const [analyzing, setAnalyzing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [showSaveToast, setShowSaveToast] = useState(false);
+
+  // Visited Journal Log State & Handlers
+  const [matchingSnap, setMatchingSnap] = useState<any | null>(null);
+  const [visitedNote, setVisitedNote] = useState('');
+  const [visitedImage, setVisitedImage] = useState('');
+  const [showVisitedForm, setShowVisitedForm] = useState(false);
+  const [isSavingVisited, setIsSavingVisited] = useState(false);
+
+  useEffect(() => {
+    if (!user || !place) {
+      setMatchingSnap(null);
+      return;
+    }
+    
+    const spotLat = Number(place.lat || place.location?.lat);
+    const spotLng = Number(place.lng || place.location?.lng);
+    
+    const q = query(collection(db, 'travelSnapshots'), orderBy('createdAt', 'desc'));
+    const unsub = onSnapshot(q, (snapshot) => {
+      let found: any = null;
+      snapshot.forEach((doc) => {
+        const d = doc.data();
+        if (d.userId === user.uid) {
+          const latDiff = Math.abs(Number(d.lat) - spotLat);
+          const lngDiff = Math.abs(Number(d.lng) - spotLng);
+          if ((latDiff < 0.001 && lngDiff < 0.001) || (d.locationName === place.displayName)) {
+            found = { id: doc.id, ...d };
+          }
+        }
+      });
+      setMatchingSnap(found);
+      if (found) {
+        setVisitedNote(found.text);
+        setVisitedImage(found.imageUrl || '');
+      }
+    });
+    return () => unsub();
+  }, [user, place]);
+
+  const handleSaveVisitedLog = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user) return;
+    setIsSavingVisited(true);
+
+    try {
+      const finalLat = Number(place.lat || place.location?.lat || 0);
+      const finalLng = Number(place.lng || place.location?.lng || 0);
+      const finalLocationName = place.displayName || place.name || `Coordinates (${finalLat.toFixed(4)}, ${finalLng.toFixed(4)})`;
+
+      const snapPayload = {
+        userId: user.uid,
+        userDisplayName: user.displayName || 'Anonymous Explorer',
+        userPhotoURL: user.photoURL || '',
+        text: visitedNote.trim() || 'Logged visited memory coordinates. Standard explorer check-in!',
+        imageUrl: visitedImage.trim() || 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?auto=format&fit=crop&w=400&q=80',
+        locationName: finalLocationName,
+        lat: finalLat,
+        lng: finalLng,
+        createdAt: Date.now()
+      };
+
+      if (matchingSnap) {
+        const docRef = doc(db, 'travelSnapshots', matchingSnap.id);
+        await setDoc(docRef, snapPayload, { merge: true });
+      } else {
+        const snapsCollection = collection(db, 'travelSnapshots');
+        const docRef = doc(snapsCollection);
+        await setDoc(docRef, snapPayload);
+      }
+
+      setShowVisitedForm(false);
+      triggerHaptic('success');
+    } catch (err) {
+      console.error("Failed to save visited log:", err);
+    } finally {
+      setIsSavingVisited(false);
+    }
+  };
+
+  const handleDeleteVisitedLog = async () => {
+    if (!matchingSnap || !user) return;
+    if (!window.confirm("Are you sure you want to delete this visited journal entry?")) return;
+    
+    try {
+      const docRef = doc(db, 'travelSnapshots', matchingSnap.id);
+      await deleteDoc(docRef);
+      setMatchingSnap(null);
+      setVisitedNote('');
+      setVisitedImage('');
+      triggerHaptic('success');
+    } catch (err) {
+      console.error("Failed to delete visited log:", err);
+    }
+  };
 
   // Interactive Status Badges States
   const [isOpen, setIsOpen] = useState(true);
@@ -657,6 +751,181 @@ const PlaceDetailsPanel = React.memo(function PlaceDetailsPanel({ place, onBack,
           <motion.h2 variants={item} className="text-2xl font-display font-bold text-white mb-2 leading-tight">
             {place.displayName}
           </motion.h2>
+
+          {/* Visited Journal Memory Section */}
+          <motion.div 
+            variants={item}
+            className="mb-6 p-4 rounded-2xl bg-gradient-to-br from-indigo-950/40 to-slate-900/60 border border-indigo-500/10 shadow-[0_4px_25px_rgba(99,102,241,0.05)] relative overflow-hidden"
+          >
+            {/* Absolute accent highlight */}
+            <div className="absolute top-0 right-0 w-24 h-24 bg-indigo-500/10 rounded-full blur-2xl pointer-events-none" />
+            
+            <div className="flex items-center justify-between mb-3 border-b border-white/5 pb-2">
+              <div className="flex items-center gap-2">
+                <BookOpen className="w-4 h-4 text-amber-400" />
+                <h4 className="text-xs font-black uppercase tracking-widest text-[#d5c3aa] font-sans">
+                  Coordinate Journal Entry
+                </h4>
+              </div>
+              
+              {matchingSnap && (
+                <div className="flex items-center gap-1 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-0.5 rounded-full">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                  <span className="text-[9px] font-mono font-bold text-emerald-400 uppercase">Visited</span>
+                </div>
+              )}
+            </div>
+
+            {/* If NOT visited and Form is NOT open */}
+            {!matchingSnap && !showVisitedForm && (
+              <div className="space-y-3 py-1">
+                <p className="text-xs text-slate-400 leading-relaxed font-sans">
+                  You haven't recorded a journal entry for this spot yet. Logging a visited coordinate locks a custom check-in memory pin on your map.
+                </p>
+                <button
+                  onClick={() => setShowVisitedForm(true)}
+                  className="w-full py-2.5 bg-gradient-to-r from-amber-600/30 to-indigo-600/30 hover:from-amber-600/40 hover:to-indigo-600/40 border border-amber-500/20 hover:border-amber-500/35 text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2"
+                >
+                  <Camera className="w-3.5 h-3.5 text-amber-400" />
+                  Mark as Visited & Add Note
+                </button>
+              </div>
+            )}
+
+            {/* Edit/Create Form */}
+            {(!matchingSnap || showVisitedForm) && showVisitedForm && (
+              <form onSubmit={handleSaveVisitedLog} className="space-y-4 pt-1">
+                <div className="space-y-1.5">
+                  <label className="text-[10px] uppercase font-mono font-bold text-slate-400 tracking-wider font-sans">
+                    Your Journal Note / Reflection
+                  </label>
+                  <textarea
+                    value={visitedNote}
+                    onChange={(e) => setVisitedNote(e.target.value)}
+                    required
+                    placeholder="Describe your memories, rating, tips or experiences here..."
+                    className="w-full h-24 p-3 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-indigo-500 transition-colors resize-none font-sans"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-[10px] uppercase font-mono font-bold text-slate-400 tracking-wider flex items-center justify-between font-sans">
+                    <span>Photo / Image URL</span>
+                    <span className="text-[9px] text-slate-500 lowercase">(optional)</span>
+                  </label>
+                  <input
+                    type="url"
+                    value={visitedImage}
+                    onChange={(e) => setVisitedImage(e.target.value)}
+                    placeholder="https://images.unsplash.com/photo-..."
+                    className="w-full p-3 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-indigo-500 transition-colors font-sans"
+                  />
+                </div>
+
+                {/* Cover presets */}
+                <div className="space-y-1.5 font-sans">
+                  <div className="text-[9px] uppercase font-mono font-bold text-slate-500 tracking-wider">
+                    Or select a beautiful travel preset cover:
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {[
+                      { name: 'Sunset Scenic', url: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=400&q=80' },
+                      { name: 'Lush Forest', url: 'https://images.unsplash.com/photo-1441974231531-c6227db76b6e?auto=format&fit=crop&w=400&q=80' },
+                      { name: 'Mountain Ridge', url: 'https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?auto=format&fit=crop&w=400&q=80' },
+                      { name: 'City Cafe', url: 'https://images.unsplash.com/photo-1501339847302-ac426a4a7cbb?auto=format&fit=crop&w=400&q=80' },
+                      { name: 'Night Lights', url: 'https://images.unsplash.com/photo-1519501025264-65ba15a82390?auto=format&fit=crop&w=400&q=80' }
+                    ].map((preset) => (
+                      <button
+                        key={preset.name}
+                        type="button"
+                        onClick={() => setVisitedImage(preset.url)}
+                        className={cn(
+                          "px-2.5 py-1 rounded-full border text-[9px] font-bold transition-all",
+                          visitedImage === preset.url 
+                            ? "bg-amber-400/20 border-amber-400 text-amber-300" 
+                            : "bg-slate-950 hover:bg-slate-900 border-slate-800 text-slate-400"
+                        )}
+                      >
+                        {preset.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex gap-2 pt-2 border-t border-white/5 font-sans">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowVisitedForm(false);
+                      if (!matchingSnap) {
+                        setVisitedNote('');
+                        setVisitedImage('');
+                      }
+                    }}
+                    className="flex-1 py-2 rounded-xl bg-slate-800 hover:bg-slate-750 text-slate-300 text-xs font-bold transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSavingVisited}
+                    className="flex-1 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition-colors flex items-center justify-center gap-1.5"
+                  >
+                    {isSavingVisited && <Loader2 className="w-3 h-3 animate-spin" />}
+                    {matchingSnap ? 'Update Note' : 'Save Memory'}
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {/* If already Visited and Form is NOT open */}
+            {matchingSnap && !showVisitedForm && (
+              <div className="space-y-4 pt-1">
+                {/* Embedded Journal Snapshot details */}
+                <div className="flex gap-3 items-start bg-slate-950/40 p-3 rounded-xl border border-white/5">
+                  {matchingSnap.imageUrl && (
+                    <img 
+                      src={matchingSnap.imageUrl} 
+                      alt="Journal memory cover" 
+                      className="w-16 h-16 rounded-lg object-cover shrink-0 border border-slate-800 shadow-md animate-fade-in"
+                    />
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs text-slate-200 font-sans leading-relaxed italic break-words">
+                      "{matchingSnap.text}"
+                    </p>
+                    <div className="text-[9px] font-mono text-slate-500 mt-2 font-bold uppercase tracking-wider">
+                      Logged on {new Date(matchingSnap.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Control Actions */}
+                <div className="flex gap-2 font-sans">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setVisitedNote(matchingSnap.text);
+                      setVisitedImage(matchingSnap.imageUrl || '');
+                      setShowVisitedForm(true);
+                    }}
+                    className="flex-1 py-2 bg-gradient-to-r from-indigo-900/20 to-slate-800 border border-indigo-500/25 hover:bg-slate-800 text-slate-300 hover:text-white rounded-xl text-[10px] font-bold uppercase tracking-wider transition-colors flex items-center justify-center gap-1.5"
+                  >
+                    <Edit className="w-3 h-3 text-indigo-400" />
+                    Edit Entry
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleDeleteVisitedLog}
+                    className="py-2 px-3 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 hover:border-rose-500/35 text-rose-450 hover:text-rose-400 rounded-xl transition-all"
+                    title="Delete Memory"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            )}
+          </motion.div>
 
           {/* New Drag to Trip Handle Segment */}
           <motion.div 

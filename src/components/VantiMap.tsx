@@ -1441,6 +1441,7 @@ const VantiMap = React.memo(function VantiMap() {
   const [mapType, setMapType] = useState<'roadmap' | 'satellite' | 'hybrid' | 'terrain'>('roadmap');
   const [isDeveloperInsightsOpen, setIsDeveloperInsightsOpen] = useState(false);
   const [diaryCount, setDiaryCount] = useState(0);
+  const [userSnapshots, setUserSnapshots] = useState<any[]>([]);
   const [isTransitioningStyle, setIsTransitioningStyle] = useState(false);
   const [transitionTargetStyle, setTransitionTargetStyle] = useState<'streets' | 'satellite'>('streets');
   const prevMapTypeRef = useRef(mapType);
@@ -1968,23 +1969,28 @@ const VantiMap = React.memo(function VantiMap() {
     return () => unsub();
   }, [user]);
 
-  // Synchronize travel snapshots count for Developer Insights report
+  // Synchronize travel snapshots count & details for persistent custom visited pins
   useEffect(() => {
     if (!user) {
       setDiaryCount(0);
+      setUserSnapshots([]);
       return;
     }
     const q = query(collection(db, 'travelSnapshots'), orderBy('createdAt', 'desc'));
     const unsub = onSnapshot(q, (snapshot) => {
       let count = 0;
+      const snaps: any[] = [];
       snapshot.forEach((doc) => {
-        if (doc.data().userId === user.uid) {
+        const data = doc.data();
+        if (data.userId === user.uid) {
           count++;
+          snaps.push({ id: doc.id, ...data });
         }
       });
       setDiaryCount(count);
+      setUserSnapshots(snaps);
     }, (err) => {
-      console.warn("Could not load snapshots count", err);
+      console.warn("Could not load snapshots count & list", err);
     });
     return () => unsub();
   }, [user]);
@@ -2772,12 +2778,57 @@ const VantiMap = React.memo(function VantiMap() {
             minTilt: 0,
             rotateControl: true,
             tiltControl: true,
-            keyboardShortcuts: true
+            keyboardShortcuts: true,
+            styles: MAP_STYLES[mapTheme as keyof typeof MAP_STYLES] || []
           }}
           internalUsageAttributionIds={['gmp_mcp_codeassist_v1_aistudio']}
           className="absolute inset-0 w-full h-full"
         >
           <WeatherMapLayer />
+
+          {/* Persistent Visited Journal Pins Layer */}
+          {isMapIdle && map && markerLib && userSnapshots.map((snap) => (
+            <SafeAdvancedMarker
+              key={`journal-pin-${snap.id}`}
+              position={{ lat: Number(snap.lat), lng: Number(snap.lng) }}
+              title={snap.locationName}
+              onClick={() => handlePlaceClick({
+                id: snap.id,
+                displayName: snap.locationName,
+                formattedAddress: `Journal Check-In Memory`,
+                lat: Number(snap.lat),
+                lng: Number(snap.lng),
+                isVisitedJournal: true,
+                visitedJournalData: snap,
+                types: ['point_of_interest']
+              })}
+            >
+              <motion.div
+                initial={{ scale: 0, rotate: -45 }}
+                animate={{ scale: 1, rotate: 0 }}
+                whileHover={{ scale: 1.15 }}
+                className="relative flex flex-col items-center cursor-pointer group"
+              >
+                {/* Pulsing glow underlay */}
+                <div className="absolute inset-0 rounded-full bg-emerald-500/20 animate-ping scale-125 opacity-40" style={{ animationDuration: '3s' }} />
+                
+                {/* Luxury Emerald/Amber outer ring */}
+                <div className="w-9 h-9 rounded-full bg-gradient-to-tr from-emerald-500 via-teal-400 to-amber-400 p-[1.5px] shadow-[0_5px_15px_rgba(16,185,129,0.35)] relative z-10 flex items-center justify-center border border-white/20">
+                  <div className="w-full h-full rounded-full bg-slate-950 flex items-center justify-center text-emerald-400 group-hover:text-amber-300 transition-colors">
+                    <Check className="w-3.5 h-3.5 stroke-[3px]" />
+                  </div>
+                </div>
+
+                {/* Pin hover tooltip */}
+                <div className="absolute bottom-10 bg-slate-950/95 border border-emerald-500/30 px-3 py-1.5 rounded-lg text-[10px] font-sans font-bold text-slate-100 scale-0 group-hover:scale-100 transition-all origin-bottom shadow-xl whitespace-nowrap z-20 pointer-events-none flex flex-col items-center gap-0.5">
+                  <span className="text-emerald-400 text-[8px] tracking-widest font-mono uppercase">VISITED MEMORY</span>
+                  <span>{snap.locationName}</span>
+                </div>
+
+                <div className="w-1.5 h-1.5 bg-emerald-500 rotate-45 -mt-0.5 border-r border-b border-indigo-950" />
+              </motion.div>
+            </SafeAdvancedMarker>
+          ))}
           {/* Live Traffic Flow Layer using D3.js */}
           {showTrafficLayer && <D3TrafficLayer mapTheme={mapTheme} activeMode={activeMode} isPowerEfficiencyEnabled={isPowerEfficiencyEnabled} />}
 
