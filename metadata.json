@@ -1,0 +1,11 @@
+{
+  "name": "VANTi UI 3.0",
+  "description": "A high-performance location engine with immersive 3D simulations, real-time weather atmospherics, and cinematic flight modes.",
+  "requestFramePermissions": [
+    "geolocation",
+    "camera"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

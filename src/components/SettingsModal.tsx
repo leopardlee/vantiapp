@@ -1,0 +1,297 @@
+import React, { useState, useEffect } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
+import { Settings, X, Shield, Globe, Ruler, Map, Check, LogIn, AlertCircle, Cpu, Terminal, Palette, Cloud } from 'lucide-react';
+import FocusLock from 'react-focus-lock';
+import { useVantiStore } from '../store/vantiStore';
+import { auth, db, loginWithGoogle } from '../lib/firebase';
+import { doc, setDoc } from 'firebase/firestore';
+
+export default function SettingsModal({
+  isOpen,
+  onClose,
+  user,
+  setMapType,
+  onOpenDeveloperInsights
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  user: any;
+  setMapType: (type: 'roadmap' | 'satellite' | 'hybrid' | 'terrain') => void;
+  onOpenDeveloperInsights?: () => void;
+}) {
+  const { 
+    units, setUnits, 
+    mapStyle, setMapStyle, 
+    mapAesthetic, setMapAesthetic, 
+    language, setLanguage,
+    showWeatherLayer, setShowWeatherLayer,
+    t 
+  } = useVantiStore();
+  
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [errorMessage, setErrorMessage] = useState('');
+  
+  // Handle setting updates and persistence
+  const handleUpdatePreferences = async (
+    newUnits: 'metric' | 'imperial', 
+    newMapStyle: 'streets' | 'satellite',
+    newLanguage: 'en' | 'ko',
+    newAesthetic: typeof mapAesthetic = mapAesthetic
+  ) => {
+    // 1. Update global zustand state
+    setUnits(newUnits);
+    setMapStyle(newMapStyle);
+    setMapType(newMapStyle === 'satellite' ? 'satellite' : 'roadmap');
+    setLanguage(newLanguage);
+    setMapAesthetic(newAesthetic);
+
+    // 2. Persist to Firestore if user is authenticated
+    if (user) {
+      setSaveStatus('saving');
+      try {
+        const userRef = doc(db, 'users', user.uid);
+        await setDoc(userRef, {
+          email: user.email || '',
+          displayName: user.displayName || '',
+          photoURL: user.photoURL || '',
+          units: newUnits,
+          mapStyle: newMapStyle,
+          language: newLanguage,
+          mapAesthetic: newAesthetic
+        }, { merge: true });
+        
+        setSaveStatus('saved');
+        setTimeout(() => setSaveStatus('idle'), 2000);
+      } catch (err: any) {
+        console.error("Failed to save settings to Firestore", err);
+        setSaveStatus('error');
+        setErrorMessage(err.message || 'Firestore write permission error');
+        setTimeout(() => setSaveStatus('idle'), 4000);
+      }
+    }
+  };
+
+  return (
+    <AnimatePresence>
+      {isOpen && (
+        <FocusLock returnFocus>
+          {/* Backdrop */}
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={onClose}
+            className="fixed inset-0 bg-black/75 backdrop-blur-md z-50 pointer-events-auto"
+          />
+
+          {/* Modal Container */}
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95, y: 20 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: 20 }}
+            transition={{ type: 'spring', damping: 25, stiffness: 250 }}
+            className="fixed inset-x-4 top-[10%] md:top-[15%] md:inset-x-auto md:left-1/2 md:transform md:-translate-x-1/2 w-full max-w-[420px] bg-[#090b11] border border-white/10 rounded-[2.5rem] p-6 md:p-8 shadow-2xl z-50 overflow-hidden pointer-events-auto border-indigo-500/20 max-h-[85vh] overflow-y-auto"
+          >
+            {/* Ambient Background glow */}
+            <div className="absolute -top-32 -left-32 w-64 h-64 bg-indigo-500/10 rounded-full filter blur-[100px] pointer-none" />
+            <div className="absolute -bottom-32 -right-32 w-64 h-64 bg-rose-500/10 rounded-full filter blur-[100px] pointer-none" />
+
+            {/* Header */}
+            <div className="flex justify-between items-center mb-6 relative z-10">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-indigo-500/10 flex items-center justify-center text-indigo-400 border border-indigo-500/20">
+                  <Settings className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-md font-black text-white uppercase tracking-wider font-mono">{t('settings.title')}</h3>
+                  <p className="text-[9px] text-slate-500 font-bold uppercase tracking-widest mt-0.5">{language === 'en' ? 'Custom Preferences' : '사용자 정의 기본 설정'}</p>
+                </div>
+              </div>
+
+              <button
+                onClick={onClose}
+                className="w-8 h-8 rounded-xl bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition-all flex items-center justify-center active:scale-95"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Content info */}
+            <div className="space-y-6 relative z-10">
+              {/* Unit System Option */}
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 px-1">
+                  <Ruler className="w-4 h-4 text-indigo-400" />
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{t('settings.units')}</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2 bg-[#0c0f16]/90 p-1.5 rounded-2xl border border-white/5">
+                  <button
+                    onClick={() => handleUpdatePreferences('metric', mapStyle, language)}
+                    className={`py-3 px-4 rounded-xl text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2 ${
+                      units === 'metric'
+                        ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-900/30 font-black'
+                        : 'bg-transparent text-slate-500 hover:text-slate-300'
+                    }`}
+                  >
+                    {units === 'metric' && <Check className="w-3.5 h-3.5 stroke-[2.5]" />}
+                    {language === 'en' ? 'Metric' : '미터법'}
+                  </button>
+                  <button
+                    onClick={() => handleUpdatePreferences('imperial', mapStyle, language)}
+                    className={`py-3 px-4 rounded-xl text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2 ${
+                      units === 'imperial'
+                        ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-900/30 font-black'
+                        : 'bg-transparent text-slate-500 hover:text-slate-300'
+                    }`}
+                  >
+                    {units === 'imperial' && <Check className="w-3.5 h-3.5 stroke-[2.5]" />}
+                    {language === 'en' ? 'Imperial' : '야드파운드법'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Map Presets */}
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 px-1">
+                  <Map className="w-4 h-4 text-emerald-400" />
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{t('settings.theme')}</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2 bg-[#0c0f16]/90 p-1.5 rounded-2xl border border-white/5">
+                  <button
+                    onClick={() => handleUpdatePreferences(units, 'streets', language)}
+                    className={`py-3 px-4 rounded-xl text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2 ${
+                      mapStyle === 'streets'
+                        ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-950/40 font-black'
+                        : 'bg-transparent text-slate-500 hover:text-slate-300'
+                    }`}
+                  >
+                    {mapStyle === 'streets' && <Check className="w-3.5 h-3.5 stroke-[2.5]" />}
+                    {language === 'en' ? 'Streets' : '일반'}
+                  </button>
+                  <button
+                    onClick={() => handleUpdatePreferences(units, 'satellite', language)}
+                    className={`py-3 px-4 rounded-xl text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2 ${
+                      mapStyle === 'satellite'
+                        ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-950/40 font-black'
+                        : 'bg-transparent text-slate-500 hover:text-slate-300'
+                    }`}
+                  >
+                    {mapStyle === 'satellite' && <Check className="w-3.5 h-3.5 stroke-[2.5]" />}
+                    {language === 'en' ? 'Satellite' : '위성'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Language Selection */}
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 px-1">
+                  <Globe className="w-4 h-4 text-rose-400" />
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{t('settings.language')}</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2 bg-[#0c0f16]/90 p-1.5 rounded-2xl border border-white/5">
+                  <button
+                    onClick={() => handleUpdatePreferences(units, mapStyle, 'en')}
+                    className={`py-3 px-4 rounded-xl text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2 ${
+                      language === 'en'
+                        ? 'bg-rose-600 text-white shadow-lg shadow-rose-950/40 font-black'
+                        : 'bg-transparent text-slate-500 hover:text-slate-300'
+                    }`}
+                  >
+                    {language === 'en' && <Check className="w-3.5 h-3.5 stroke-[2.5]" />}
+                    English
+                  </button>
+                  <button
+                    onClick={() => handleUpdatePreferences(units, mapStyle, 'ko')}
+                    className={`py-3 px-4 rounded-xl text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2 ${
+                      language === 'ko'
+                        ? 'bg-rose-600 text-white shadow-lg shadow-rose-950/40 font-black'
+                        : 'bg-transparent text-slate-500 hover:text-slate-300'
+                    }`}
+                  >
+                    {language === 'ko' && <Check className="w-3.5 h-3.5 stroke-[2.5]" />}
+                    한국어
+                  </button>
+                </div>
+              </div>
+
+              {/* Weather Layer Option */}
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 px-1">
+                  <Cloud className="w-4 h-4 text-sky-400" />
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{t('settings.weather') || 'Weather Layer (OpenWeatherMap)'}</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2 bg-[#0c0f16]/90 p-1.5 rounded-2xl border border-white/5">
+                  <button
+                    onClick={() => {
+                        setShowWeatherLayer(true);
+                    }}
+                    className={`py-3 px-4 rounded-xl text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2 ${
+                      showWeatherLayer
+                        ? 'bg-sky-600 text-white shadow-lg shadow-sky-950/40 font-black'
+                        : 'bg-transparent text-slate-500 hover:text-slate-300'
+                    }`}
+                  >
+                    {showWeatherLayer && <Check className="w-3.5 h-3.5 stroke-[2.5]" />}
+                    {language === 'en' ? 'Enabled' : '사용'}
+                  </button>
+                  <button
+                    onClick={() => {
+                        setShowWeatherLayer(false);
+                    }}
+                    className={`py-3 px-4 rounded-xl text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2 ${
+                      showWeatherLayer === false
+                        ? 'bg-sky-600 text-white shadow-lg shadow-sky-950/40 font-black'
+                        : 'bg-transparent text-slate-500 hover:text-slate-300'
+                    }`}
+                  >
+                    {showWeatherLayer === false && <Check className="w-3.5 h-3.5 stroke-[2.5]" />}
+                    {language === 'en' ? 'Disabled' : '사용 안 함'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Developer Insights HUD Trigger */}
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 px-1">
+                  <Cpu className="w-4 h-4 text-violet-400 font-bold" />
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">METRICS ENGINE</span>
+                </div>
+                <button
+                  onClick={(e) => {
+                    e.preventDefault();
+                    if (onOpenDeveloperInsights) {
+                      onOpenDeveloperInsights();
+                    }
+                  }}
+                  className="w-full py-3 px-4 rounded-xl bg-slate-900/90 hover:bg-[#121622] border border-violet-500/10 hover:border-violet-500/35 transition-all text-left flex items-center justify-between group active:scale-[0.98]"
+                >
+                  <div className="flex items-center gap-3">
+                    <Terminal className="w-4 h-4 text-violet-400" />
+                    <div>
+                      <p className="text-[11px] font-black text-white uppercase tracking-wider font-mono">DEVELOPER INSIGHTS</p>
+                      <p className="text-[8px] text-slate-500 font-bold uppercase tracking-widest mt-0.5">METRICS & ANALYTICS</p>
+                    </div>
+                  </div>
+                  <span className="text-[8px] font-mono text-slate-500 group-hover:text-violet-400 font-bold transition-all uppercase">LAUNCH →</span>
+                </button>
+              </div>
+
+              {/* Status Indicator */}
+              {user && (
+                <div className="p-4 rounded-2xl bg-[#0d1017]/80 border border-white/5">
+                   <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Shield className="w-4 h-4 text-emerald-500" />
+                        <span className="text-[10px] font-mono font-black text-slate-400 uppercase tracking-wider">Cloud Connected</span>
+                      </div>
+                      {saveStatus === 'saved' && <span className="text-[8px] font-mono text-emerald-400 font-bold uppercase tracking-widest">Synced</span>}
+                   </div>
+                </div>
+              )}
+            </div>
+          </motion.div>
+        </FocusLock>
+      )}
+    </AnimatePresence>
+  );
+}

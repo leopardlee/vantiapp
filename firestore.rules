@@ -1,0 +1,154 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Global Safety Net: default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+    
+    // Hardened ABAC / Schema Primitives
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+    
+    function incoming() {
+      return request.resource.data;
+    }
+    
+    function existing() {
+      return resource.data;
+    }
+
+    // Entity Schema Validation Helpers
+    function isValidUser(data) {
+      return data.email is string 
+        && data.email.size() <= 200
+        && (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 100))
+        && (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 500))
+        && (!('units' in data) || (data.units in ['metric', 'imperial']))
+        && (!('mapStyle' in data) || (data.mapStyle in ['streets', 'satellite']))
+        && (!('language' in data) || (data.language in ['en', 'ko']));
+    }
+
+    function isValidRecentSearch(data) {
+      return data.query is string && data.query.size() <= 200
+        && data.timestamp is number;
+    }
+
+    function isValidSavedPlace(data) {
+      return data.placeId is string && data.placeId.size() <= 128
+        && data.displayName is string && data.displayName.size() <= 200
+        && (!('address' in data) || (data.address is string && data.address.size() <= 500))
+        && (!('lat' in data) || (data.lat is number))
+        && (!('lng' in data) || (data.lng is number))
+        && (data.savedAt is number);
+    }
+
+    function isValidChatMessage(data) {
+      return data.text is string && data.text.size() <= 5000
+        && data.isUser is bool
+        && data.timestamp is number
+        && (!('imageUrl' in data) || (data.imageUrl is string && data.imageUrl.size() <= 500));
+    }
+
+    function isValidTravelSnapshot(data) {
+      return data.userId is string && data.userId.size() <= 128
+        && data.userId == request.auth.uid // Anti-spoofing identity verification
+        && data.text is string && data.text.size() <= 2000
+        && data.locationName is string && data.locationName.size() <= 200
+        && (!('userDisplayName' in data) || (data.userDisplayName is string && data.userDisplayName.size() <= 100))
+        && (!('userPhotoURL' in data) || (data.userPhotoURL is string && data.userPhotoURL.size() <= 500))
+        && (!('imageUrl' in data) || (data.imageUrl is string && data.imageUrl.size() <= 500))
+        && (!('lat' in data) || (data.lat is number))
+        && (!('lng' in data) || (data.lng is number))
+        && (data.createdAt is number);
+    }
+
+    function isValidGroupTrip(data) {
+      return data.ownerId is string && data.ownerId == request.auth.uid
+        && data.name is string && data.name.size() <= 100
+        && data.participantEmails is list
+        && data.participantEmails.size() <= 50
+        && data.createdAt is number;
+    }
+
+    function isParticipantOfTrip(tripId) {
+      let trip = get(/databases/$(database)/documents/groupTrips/$(tripId)).data;
+      return request.auth.uid == trip.ownerId || request.auth.token.email in trip.participantEmails;
+    }
+
+    function isValidItinerary(data) {
+      return data.stops is list 
+        && data.stops.size() <= 20
+        && data.updatedAt is number;
+    }
+
+    // Collection Route Bindings
+    match /users/{userId} {
+      allow get: if isSignedIn() && request.auth.uid == userId;
+      allow create: if isSignedIn() && request.auth.uid == userId && isValidId(userId) && isValidUser(incoming());
+      allow update: if isSignedIn() && request.auth.uid == userId && isValidId(userId) && isValidUser(incoming())
+        && incoming().email == existing().email; // Immutable Email Guard
+      allow delete: if false;
+
+      match /planner/active {
+        allow get: if isSignedIn() && request.auth.uid == userId;
+        allow create, update: if isSignedIn() && request.auth.uid == userId && isValidItinerary(incoming());
+        allow delete: if isSignedIn() && request.auth.uid == userId;
+      }
+
+      match /savedPlaces/{placeId} {
+        allow read: if isSignedIn() && request.auth.uid == userId;
+        allow create, update: if isSignedIn() && request.auth.uid == userId && isValidId(placeId) && isValidSavedPlace(incoming());
+        allow delete: if isSignedIn() && request.auth.uid == userId && isValidId(placeId);
+      }
+
+      match /recentSearches/{searchId} {
+        allow read: if isSignedIn() && request.auth.uid == userId;
+        allow create, update: if isSignedIn() && request.auth.uid == userId && isValidId(searchId) && isValidRecentSearch(incoming());
+        allow delete: if isSignedIn() && request.auth.uid == userId && isValidId(searchId);
+      }
+      
+      match /chatHistory/{messageId} {
+        allow read: if isSignedIn() && request.auth.uid == userId;
+        allow create: if isSignedIn() && request.auth.uid == userId && isValidId(messageId) && isValidChatMessage(incoming());
+        allow update, delete: if false;
+      }
+    }
+
+    match /travelSnapshots/{snapshotId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && isValidId(snapshotId) && isValidTravelSnapshot(incoming());
+      allow update: if isSignedIn() && isValidId(snapshotId) && isValidTravelSnapshot(incoming())
+        && incoming().userId == existing().userId
+        && incoming().createdAt == existing().createdAt;
+      allow delete: if isSignedIn() && isValidId(snapshotId) && existing().userId == request.auth.uid;
+    }
+
+    match /groupTrips/{tripId} {
+      allow read: if isSignedIn() && (request.auth.uid == resource.data.ownerId || request.auth.token.email in resource.data.participantEmails);
+      allow create: if isSignedIn() && isValidId(tripId) && isValidGroupTrip(incoming());
+      allow update: if isSignedIn() && isValidId(tripId) 
+        && request.auth.uid == existing().ownerId
+        && isValidGroupTrip(incoming())
+        && incoming().ownerId == existing().ownerId
+        && incoming().createdAt == existing().createdAt;
+      allow delete: if isSignedIn() && isValidId(tripId) && existing().ownerId == request.auth.uid;
+
+      match /snapshots/{snapshotId} {
+        allow read: if isSignedIn() && isParticipantOfTrip(tripId);
+        allow create: if isSignedIn() && isValidId(snapshotId) && isValidTravelSnapshot(incoming()) && isParticipantOfTrip(tripId);
+        allow update: if isSignedIn() && isValidId(snapshotId) && isValidTravelSnapshot(incoming())
+          && incoming().userId == existing().userId
+          && incoming().createdAt == existing().createdAt
+          && isParticipantOfTrip(tripId);
+        allow delete: if isSignedIn() && isValidId(snapshotId) && existing().userId == request.auth.uid;
+      }
+    }
+  }
+}

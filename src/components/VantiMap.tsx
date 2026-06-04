@@ -1,0 +1,5284 @@
+import React, { useState, useEffect, useRef, useCallback, useMemo, Component, ReactNode } from 'react';
+import { Map, AdvancedMarker, useMap, useMapsLibrary, Map3D, MapMode, GestureHandling, Map3DRef, Marker3D } from '@vis.gl/react-google-maps';
+import { MarkerClusterer } from '@googlemaps/markerclusterer';
+import { 
+  Search, MapPin, Navigation, List, X, Loader2, LogIn, LogOut, Box, Globe, Star,
+  Bookmark, Users, Sparkles, Tag, User, Layers, LocateFixed, Eye, EyeOff, Ticket, 
+  HelpCircle, ChevronRight, Award, Wallet, Info, Camera, Video, BookOpen,
+  Plus, Minus, Mountain, Download, Radar as RadarIcon, Settings, Map as MapIcon,
+  Check, CheckSquare, Square, Wifi, Battery, Flame, Activity, ShieldAlert, Lock, Unlock,
+  Compass, Cloud, Sun, CloudRain, Snowflake, AlertCircle, Heart, Crosshair, Mic, Trash2, Zap
+} from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
+import { cn } from '../lib/utils';
+import FocusLock from 'react-focus-lock';
+import PlaceDetailsPanel from './PlaceDetailsPanel';
+import RouteDisplay from './RouteDisplay';
+import RoutePlannerPanel from './RoutePlannerPanel';
+import Chatbot from './Chatbot';
+import InfoBubble from './InfoBubble';
+import SpeedometerWidget from './SpeedometerWidget';
+import MobileControlDrawer from './MobileControlDrawer';
+import WeatherEffects from './WeatherEffects';
+import SoundEngine from './SoundEngine';
+import { AnalyticsDashboard } from './AnalyticsDashboard';
+import { Skeleton, SkeletonCircle, SkeletonText } from './common/Skeleton';
+import { TripPlannerTab } from './TripPlannerTab';
+import SettingsModal from './SettingsModal';
+import TravelDiary from './TravelDiary';
+import DeveloperInsights from './DeveloperInsights';
+import WeatherRouteOptimizer from './WeatherRouteOptimizer';
+import MapLegend from './MapLegend';
+import ARView from './ARView';
+
+import { auth, loginWithGoogle, logout, db } from '../lib/firebase';
+import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
+import { collection, query, getDocs, getDoc, doc, orderBy, onSnapshot, limit, deleteDoc, setDoc } from 'firebase/firestore';
+import { SEOUL_MOCK_PLACES, CANADA_MOCK_PLACES, MOCK_FRIENDS, MOCK_COUPONS, MockPlace, UserFriend } from '../data/mockPlaces';
+import trendingPlaces from '../data/trendingPlaces.json';
+import { VantiMode } from '../types';
+import { saveOfflineArea, getOfflineAreas, renameOfflineArea, deleteOfflineArea, OfflineArea } from '../lib/offline';
+import * as d3 from 'd3';
+import { useVantiStore, VantiState } from '../store/vantiStore';
+import { getTranslation } from '../lib/translations';
+import { pipeline } from '@xenova/transformers';
+
+const MAP_ID = 'DEMO_MAP_ID'; // Using standard demo ID for reliable vector map features
+const DEFAULT_CENTER = { lat: 37.5665, lng: 126.9780 }; // Seoul, Korea
+
+type HapticType = 'tap' | 'switch' | 'close' | 'open_panel' | 'save' | 'mode3d' | 'impact' | 'success';
+
+const CURATED_LISTS = [
+  { id: 'dua_lipa_seoul', title: 'Dua Lipa\'s Seoul Top Hits', description: 'Hidden gems and favorite shops', categoryTag: 'Dining' },
+  { id: 'night_vision', title: 'Seoul Neon Night', description: 'Best night street spots', categoryTag: 'Cultural' },
+  { id: 'canada_working_holiday', title: '프리티 캐나다 워홀맵', description: '캐나다 한인 보금자리 및 필수 체크포인트', categoryTag: 'All' }
+];
+
+const CANADA_CENTER = { lat: 49.2827, lng: -123.1207 }; // Vancouver Center
+
+const matchesCategoryFilter = (types: string[] | undefined, filter: string): boolean => {
+  if (!types || types.length === 0) return filter === 'All';
+  if (filter === 'All') return true;
+
+  const lowerTypes = types.map(t => t.toLowerCase());
+
+  switch (filter) {
+    case 'Coffee':
+      return lowerTypes.some(t => t.includes('coffee') || t.includes('cafe') || t.includes('bakery') || t.includes('barista'));
+    case 'Dining':
+      return lowerTypes.some(t => t.includes('restaurant') || t.includes('bar') || t.includes('food') || t.includes('dining') || t.includes('meal') || t.includes('eatery'));
+    case 'Parks':
+      return lowerTypes.some(t => t.includes('park') || t.includes('garden') || t.includes('forest') || t.includes('playground') || t.includes('recreation'));
+    case 'Culture':
+    case 'Cultural':
+      return lowerTypes.some(t => t.includes('culture') || t.includes('cultural') || t.includes('museum') || t.includes('art') || t.includes('landmark') || t.includes('historic') || t.includes('scenic') || t.includes('library') || t.includes('embassy') || t.includes('worship') || t.includes('attraction'));
+    case 'Shopping':
+      return lowerTypes.some(t => t.includes('shopping') || t.includes('store') || t.includes('mall') || t.includes('grocery') || t.includes('supermarket') || t.includes('commerce') || t.includes('clothing') || t.includes('department') || t.includes('boutique'));
+    default:
+      return lowerTypes.some(t => t.includes(filter.toLowerCase()));
+  }
+};
+
+const markerVariants = {
+  hidden: { scale: 0, opacity: 0 },
+  visible: ({ idx, scale }: { idx: number, scale: number }) => ({
+    scale: scale,
+    opacity: 1,
+    transition: {
+      type: "spring" as const,
+      stiffness: 280,
+      damping: 24,
+      delay: Math.min(0.6, idx * 0.04), // dynamic staggered entry with a ceiling
+    }
+  })
+};
+
+interface D3TrafficLayerProps {
+  mapTheme: string;
+  activeMode: VantiMode;
+  isPowerEfficiencyEnabled: boolean;
+}
+
+const D3TrafficLayer = React.memo(function D3TrafficLayer({ mapTheme, activeMode, isPowerEfficiencyEnabled }: D3TrafficLayerProps) {
+  const map = useMap();
+
+  useEffect(() => {
+    if (!map) return;
+    const gMaps = (window as any).google?.maps;
+    if (!gMaps) return;
+
+    class D3OverlayView extends gMaps.OverlayView {
+      private div: HTMLDivElement | null = null;
+      constructor() {
+        super();
+      }
+
+      onAdd() {
+        const div = document.createElement('div');
+        div.style.position = 'absolute';
+        div.style.left = '0px';
+        div.style.top = '0px';
+        div.style.width = '100vw';
+        div.style.height = '100vh';
+        div.style.pointerEvents = 'none';
+        this.div = div;
+        const panes = this.getPanes();
+        panes.overlayLayer.appendChild(div);
+      }
+
+      draw() {
+        if (!this.div) return;
+        const projection = this.getProjection();
+        if (!projection) return;
+
+        const roads = [
+          // Seoul main arteries (visible when center is Seoul)
+          {
+            name: "Han-river Expressway",
+            coords: [{ lat: 37.530, lng: 126.910 }, { lat: 37.525, lng: 126.960 }, { lat: 37.520, lng: 127.010 }, { lat: 37.512, lng: 127.050 }],
+            speed: "fast"
+          },
+          {
+            name: "Gangnam Expressway Axis",
+            coords: [{ lat: 37.480, lng: 127.025 }, { lat: 37.495, lng: 127.025 }, { lat: 37.515, lng: 127.021 }, { lat: 37.530, lng: 127.023 }],
+            speed: "heavy"
+          },
+          {
+            name: "Olympic-Daero Sector C",
+            coords: [{ lat: 37.545, lng: 126.915 }, { lat: 37.540, lng: 126.980 }, { lat: 37.536, lng: 127.045 }],
+            speed: "moderate"
+          },
+          {
+            name: "Sejong Avenue Route",
+            coords: [{ lat: 37.560, lng: 126.973 }, { lat: 37.576, lng: 126.975 }],
+            speed: "slow"
+          },
+          // Canada Main arteries
+          {
+            name: "Georgia Centerline",
+            coords: [{ lat: 49.290, lng: -123.131 }, { lat: 49.282, lng: -123.120 }, { lat: 49.272, lng: -123.110 }],
+            speed: "fast"
+          },
+          {
+            name: "Granville Bypass",
+            coords: [{ lat: 49.260, lng: -123.125 }, { lat: 49.270, lng: -123.130 }, { lat: 49.283, lng: -123.124 }],
+            speed: "heavy"
+          },
+          {
+            name: "Lions Gate Connection Segment",
+            coords: [{ lat: 49.300, lng: -123.138 }, { lat: 49.310, lng: -123.137 }, { lat: 49.322, lng: -123.130 }],
+            speed: "slow"
+          }
+        ];
+
+        const currentCenter = map.getCenter();
+        const centerLat = currentCenter ? currentCenter.lat() : 37.56;
+        const isNearCanada = centerLat > 40;
+
+        const activeRoads = roads.filter(r => {
+          const firstCoordLat = r.coords[0].lat;
+          if (isNearCanada) {
+            return firstCoordLat > 40;
+          } else {
+            return firstCoordLat < 40;
+          }
+        });
+
+        const containerSelection = d3.select(this.div as any);
+        let svg = containerSelection.select('svg');
+        if (svg.empty()) {
+          svg = containerSelection.append('svg')
+            .style('position', 'absolute')
+            .style('width', '100%')
+            .style('height', '100%')
+            .style('pointer-events', 'none');
+        }
+
+        const lineData = activeRoads.map(road => {
+          const points = road.coords.map(c => {
+            try {
+              const latLng = new gMaps.LatLng(c.lat, c.lng);
+              const pixel = projection.fromLatLngToDivPixel(latLng);
+              return pixel ? [pixel.x, pixel.y] : null;
+            } catch (err) {
+              console.warn("fromLatLngToDivPixel failed under active projection:", err);
+              return null;
+            }
+          }).filter(Boolean) as [number, number][];
+          return { name: road.name, speed: road.speed, points };
+        });
+
+        const d3Line = d3.line<[number, number]>()
+          .x(d => d[0])
+          .y(d => d[1])
+          .curve(d3.curveBasis);
+
+        const paths = svg.selectAll<SVGPathElement, typeof lineData[0]>('path.traffic-stream')
+          .data(lineData, d => d.name);
+
+        paths.exit().remove();
+
+        const pathsEnter = paths.enter()
+          .append('path')
+          .attr('class', 'traffic-stream')
+          .attr('fill', 'none')
+          .attr('stroke-linecap', 'round');
+
+        paths.merge(pathsEnter as any)
+          .attr('d', d => d3Line(d.points) || '')
+          .attr('stroke', d => {
+            if (d.speed === 'fast') return '#10b981';
+            if (d.speed === 'moderate') return '#f59e0b';
+            if (d.speed === 'slow') return '#f97316';
+            return '#f43f5e';
+          })
+          .attr('stroke-width', () => {
+            const currentZoom = map.getZoom() || 12;
+            return Math.max(2, (currentZoom - 8) * 1.1);
+          })
+          .style('stroke-dasharray', '12, 10')
+          .style('opacity', () => {
+            const currentZoom = map.getZoom() || 12;
+            return currentZoom < 10 ? '0' : '0.82';
+          })
+          .style('animation', d => {
+            if (isPowerEfficiencyEnabled) return 'none'; // Reduce refresh rate/animation load
+            const duration = d.speed === 'fast' ? '1s' : d.speed === 'moderate' ? '2s' : d.speed === 'slow' ? '4.5s' : '8s';
+            return `vanti-traffic-pulsing ${duration} linear infinite`;
+          });
+      }
+
+      onRemove() {
+        if (this.div) {
+          this.div.parentNode?.removeChild(this.div);
+          this.div = null;
+        }
+      }
+    }
+
+    const overlay = new D3OverlayView();
+    overlay.setMap(map);
+
+    // If power efficiency is on, we might debounce or limit bounds_changed if possible,
+    // but the CSS animation disable above significantly saves GPU/CPU rendering cycles.
+    const cameraListener = map.addListener('bounds_changed', () => {
+      overlay.draw();
+    });
+
+    return () => {
+      cameraListener.remove();
+      overlay.setMap(null);
+    };
+  }, [map, activeMode, mapTheme, isPowerEfficiencyEnabled]);
+
+  return (
+    <style dangerouslySetInnerHTML={{ __html: `
+      @keyframes vanti-traffic-pulsing {
+        to {
+          stroke-dashoffset: -44;
+        }
+      }
+    `}} />
+  );
+});
+
+const WeatherMapLayer = React.memo(function WeatherMapLayer() {
+  const map = useMap();
+  const showWeatherLayer = useVantiStore(state => state.showWeatherLayer);
+  const weatherLayerType = useVantiStore(state => state.weatherLayerType);
+
+  useEffect(() => {
+    if (!map || !showWeatherLayer) return;
+
+    let weatherLayer: google.maps.ImageMapType | null = null;
+    
+    // We use OpenWeatherMap for live radar (precipitation/temp)
+    const setupOpenWeather = () => {
+      try {
+        const layerType = weatherLayerType === 'precipitation' ? 'precipitation_new' : 'temp_new';
+        weatherLayer = new google.maps.ImageMapType({
+          getTileUrl: (coord, zoom) => {
+            return `/api/weather-tile/${layerType}/${zoom}/${coord.x}/${coord.y}`;
+          },
+          tileSize: new google.maps.Size(256, 256),
+          opacity: weatherLayerType === 'precipitation' ? 0.75 : 0.45,
+          name: 'Weather'
+        });
+
+        map.overlayMapTypes.push(weatherLayer);
+      } catch (err) {
+        console.error("OpenWeatherMap layer setup failed", err);
+      }
+    };
+
+    setupOpenWeather();
+
+    return () => {
+      if (weatherLayer) {
+        const index = map.overlayMapTypes.getArray().indexOf(weatherLayer);
+        if (index !== -1) map.overlayMapTypes.removeAt(index);
+      }
+    };
+  }, [map, showWeatherLayer, weatherLayerType]);
+
+  return null;
+});
+
+const WeatherOverlay = React.memo(({ weather }: { weather: string | null }) => {
+  if (!weather) return null;
+  const w = weather.toLowerCase();
+  const isSnow = w.includes('snow');
+  const isRain = w.includes('rain');
+  
+  if (isSnow) {
+    return (
+      <div className="absolute inset-0 rounded-full border border-white/40 bg-white/20 backdrop-blur-[1px] overflow-hidden pointer-events-none">
+        <div className="absolute top-1 left-2 w-1.5 h-1.5 bg-white rounded-full opacity-60"></div>
+        <div className="absolute bottom-1 right-1 w-1 h-1 bg-white rounded-full opacity-80"></div>
+      </div>
+    );
+  }
+  
+  if (isRain) {
+    return (
+      <div className="absolute inset-0 rounded-full border border-blue-300/40 bg-blue-400/20 backdrop-blur-[2px] overflow-hidden pointer-events-none">
+        <div className="absolute top-0.5 right-2 w-1 h-3 rounded-full bg-white/40 rotate-[20deg]"></div>
+        <div className="absolute bottom-1 left-1 w-1 h-2 rounded-full bg-white/30 rotate-[20deg]"></div>
+      </div>
+    );
+  }
+
+  return null;
+});
+
+const WeatherCenterOverlay = React.memo(({ lat, lng }: { lat: number; lng: number }) => {
+  const [weatherData, setWeatherData] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    async function loadWeather() {
+      setLoading(true);
+      try {
+        const res = await fetch(`/api/weather/${lat.toFixed(4)}/${lng.toFixed(4)}`);
+        const data = await res.json();
+        if (active) {
+          setWeatherData(data);
+        }
+      } catch (err) {
+        console.warn("Failed to load map center weather:", err);
+      } finally {
+        if (active) setLoading(false);
+      }
+    }
+    loadWeather();
+    return () => {
+      active = false;
+    };
+  }, [lat, lng]);
+
+  const { units } = useVantiStore();
+
+  if (!weatherData || !weatherData.current) return null;
+
+  const temp = weatherData.current.temperature_2m;
+  const code = weatherData.current.weather_code;
+
+  const getWeatherDisplay = (wCode: number) => {
+    if (wCode <= 1) return { label: 'Clear', color: 'text-amber-400 font-bold', icon: Sun };
+    if (wCode <= 3) return { label: 'Cloudy', color: 'text-slate-300 font-bold', icon: Cloud };
+    if (wCode <= 67) return { label: 'Rainy', color: 'text-blue-400 font-bold', icon: CloudRain };
+    return { label: 'Snowy', color: 'text-sky-300 font-bold', icon: Snowflake };
+  };
+
+  const info = getWeatherDisplay(code);
+  const Icon = info.icon;
+
+  const isImperial = units === 'imperial';
+  const displayTemp = isImperial ? Math.round((temp * 9/5) + 32) : temp;
+  const tempUnit = isImperial ? '°F' : '°C';
+
+  return (
+    <div className="bg-[#0f1117]/95 backdrop-blur-2xl border border-white/10 rounded-2xl h-12 flex items-center px-3 gap-2 shadow-2xl transition-all duration-300 pointer-events-auto">
+      <div className="p-1.5 rounded-lg bg-white/5 flex items-center justify-center shrink-0">
+        {loading ? (
+          <Loader2 className="w-3.5 h-3.5 text-rose-500 animate-spin" />
+        ) : (
+          <Icon className={cn("w-4 h-4", info.color)} />
+        )}
+      </div>
+      <div className="flex flex-col items-start min-w-[50px] select-none">
+        <span className="text-[8px] text-slate-500 font-bold uppercase tracking-widest leading-none">WEATHER</span>
+        <div className="flex items-baseline gap-1 mt-0.5">
+          <span className="text-[11px] font-black font-mono leading-none text-white">{displayTemp}{tempUnit}</span>
+          <span className="text-[8px] font-bold uppercase text-slate-400 leading-none">{info.label}</span>
+        </div>
+      </div>
+    </div>
+  );
+});
+
+const AtmosphericOverlay = React.memo(({ weather }: { weather: any }) => {
+  if (!weather) return null;
+  const condition = weather.main || "Clear";
+
+  if (condition === "Rain" || condition === "Drizzle" || condition === "Thunderstorm") {
+    const isThunder = condition === "Thunderstorm";
+    return (
+      <div className="absolute inset-0 pointer-events-none overflow-hidden z-[10] select-none">
+        {/* Ambient storm glow & dark sky vignette */}
+        <div className="absolute inset-0 bg-indigo-950/20 mix-blend-multiply shadow-[inset_0_0_120px_rgba(0,0,0,0.85)]" />
+        
+        {/* Animated Lightning Flash for Thunderstorms */}
+        {isThunder && (
+          <div className="absolute inset-0 bg-white/0 animate-[lightning_9s_ease-out_infinite]" />
+        )}
+
+        {/* Rain Streaks Overlay */}
+        <div className="absolute inset-0 bg-[linear-gradient(to_bottom,transparent_0%,rgba(255,255,255,0.06)_50%,transparent_100%)] bg-[size:3px_200px] opacity-40 animate-[rain_0.3s_linear_infinite]" />
+        
+        {/* Falling droplets */}
+        <div className="absolute inset-0 flex justify-around">
+          {Array.from({ length: 40 }).map((_, i) => (
+            <motion.div
+              key={`drop-${i}`}
+              initial={{ y: -60, opacity: 0 }}
+              animate={{ y: "110vh", opacity: [0, 0.7, 0.7, 0] }}
+              transition={{
+                duration: 1 + Math.random() * 0.8,
+                repeat: Infinity,
+                delay: Math.random() * 2,
+                ease: "linear"
+              }}
+              className="w-[1.5px] h-[30px] bg-gradient-to-t from-sky-400/50 to-transparent"
+              style={{ marginLeft: `${Math.random() * 20}px` }}
+            />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (condition === "Clouds") {
+    return (
+      <div className="absolute inset-0 pointer-events-none overflow-hidden z-[10] select-none">
+        {/* Moody soft overcast tone */}
+        <div className="absolute inset-0 bg-slate-900/10 shadow-[inset_0_0_80px_rgba(15,23,42,0.4)]" />
+
+        {/* Drifting Large Clouds */}
+        <motion.div
+          initial={{ x: "-100%", y: "15%", opacity: 0 }}
+          animate={{ x: "110%", opacity: [0, 0.25, 0.25, 0] }}
+          transition={{
+            repeat: Infinity,
+            duration: 110,
+            ease: "linear"
+          }}
+          className="absolute w-[450px] h-[180px] bg-white rounded-full filter blur-[55px]"
+        />
+
+        <motion.div
+          initial={{ x: "110%", y: "45%", opacity: 0 }}
+          animate={{ x: "-100%", opacity: [0, 0.18, 0.18, 0] }}
+          transition={{
+            repeat: Infinity,
+            duration: 150,
+            ease: "linear"
+          }}
+          className="absolute w-[550px] h-[220px] bg-slate-200 rounded-full filter blur-[65px]"
+        />
+
+        <motion.div
+          initial={{ x: "-100%", y: "65%", opacity: 0 }}
+          animate={{ x: "110%", opacity: [0, 0.2, 0.2, 0] }}
+          transition={{
+            repeat: Infinity,
+            duration: 130,
+            ease: "linear",
+            delay: 20
+          }}
+          className="absolute w-[380px] h-[150px] bg-zinc-300 rounded-full filter blur-[50px]"
+        />
+      </div>
+    );
+  }
+
+  if (condition === "Snow") {
+    return (
+      <div className="absolute inset-0 pointer-events-none overflow-hidden z-[10] select-none">
+        <div className="absolute inset-0 bg-sky-900/5 shadow-[inset_0_0_60px_rgba(255,255,255,0.1)]" />
+        
+        {/* Drifting Snowflake Particles */}
+        {Array.from({ length: 35 }).map((_, i) => (
+          <motion.div
+            key={`snow-${i}`}
+            initial={{ y: -40, x: `${Math.random() * 110}%`, opacity: 0, scale: 0.5 }}
+            animate={{ 
+              y: "110vh", 
+              x: [`${Math.random() * 100}%`, `${Math.random() * 100 - 10}%`],
+              opacity: [0, 0.8, 0.8, 0],
+              rotate: 360,
+              scale: [0.5, 1, 1, 0.5]
+            }}
+            transition={{
+              duration: 8 + Math.random() * 12,
+              repeat: Infinity,
+              delay: Math.random() * 5,
+              ease: "linear"
+            }}
+            className="absolute rounded-full bg-white flex items-center justify-center filter blur-[0.5px]"
+            style={{
+              width: `${2 + Math.random() * 4}px`,
+              height: `${2 + Math.random() * 4}px`,
+            }}
+          />
+        ))}
+      </div>
+    );
+  }
+
+  // "Clear" or "Sun" Condition: Render beautiful golden sun glare in top-right of map view
+  return (
+    <div className="absolute inset-0 pointer-events-none overflow-hidden z-[10] select-none mix-blend-screen opacity-95">
+      {/* Warm map wide golden filter */}
+      <div className="absolute inset-0 bg-amber-500/[0.015]" />
+      
+      {/* Solar Glare / Sunbeams */}
+      <motion.div 
+        animate={{ 
+          scale: [0.95, 1.05, 0.95],
+          opacity: [0.65, 0.85, 0.65]
+        }}
+        transition={{
+          duration: 8,
+          repeat: Infinity,
+          ease: "easeInOut"
+        }}
+        className="absolute -top-48 -right-48 w-[650px] h-[650px] rounded-full bg-gradient-to-br from-amber-400/25 via-orange-500/5 to-transparent filter blur-[90px]"
+      />
+      <div className="absolute top-12 right-24 w-1 h-[400px] bg-gradient-to-b from-amber-200/10 via-amber-400/[0.01] to-transparent rotate-45 origin-top filter blur-[4px]" />
+      <div className="absolute top-12 right-24 w-2 h-[450px] bg-gradient-to-b from-amber-300/15 via-orange-400/[0.01] to-transparent rotate-30 origin-top filter blur-[6px]" />
+    </div>
+  );
+});
+
+/**
+ * Cinematic custom "fly-to" camera transition animation.
+ * Smoothly interpolates the map camera (center, zoom, heading, tilt) over time,
+ * using a elegant arc trajectory for long-distance transitions.
+ */
+const animateFlyTo = (
+  map: google.maps.Map,
+  targetLoc: google.maps.LatLngLiteral,
+  targetZoom: number = 18.8,
+  targetTilt: number = 67.5,
+  targetHeadingOffset: number = 35,
+  duration: number = 1400
+) => {
+  const startCenter = map.getCenter();
+  if (!startCenter) {
+    map.panTo(targetLoc);
+    map.setZoom(targetZoom);
+    return;
+  }
+  const startLat = startCenter.lat();
+  const startLng = startCenter.lng();
+  const startZoom = map.getZoom() || 12;
+  const startTilt = map.getTilt() || 0;
+  const startHeading = map.getHeading() || 0;
+
+  const targetHeading = (startHeading + targetHeadingOffset) % 360;
+  const startTime = performance.now();
+
+  const step = (time: number) => {
+    const elapsed = time - startTime;
+    const progress = Math.min(elapsed / duration, 1);
+
+    // Easing: cubic out for ultra smooth ending
+    const ease = 1 - Math.pow(1 - progress, 3);
+
+    // Arcing zoom response:
+    // If we're flying a notable distance, zoom OUT (upwards) slightly to simulate aerial camera panning
+    const distanceLat = Math.abs(targetLoc.lat - startLat);
+    const distanceLng = Math.abs(targetLoc.lng - startLng);
+    const isFar = (distanceLat + distanceLng) > 0.004;
+
+    let curZoom = startZoom + (targetZoom - startZoom) * ease;
+    if (isFar) {
+      const arcHeight = Math.min(2.5, Math.max(1, startZoom - 9));
+      const dip = arcHeight * Math.sin(Math.PI * progress);
+      curZoom = curZoom - dip;
+    }
+
+    const curLat = startLat + (targetLoc.lat - startLat) * ease;
+    const curLng = startLng + (targetLoc.lng - startLng) * ease;
+
+    let diffHeading = targetHeading - startHeading;
+    if (diffHeading > 180) diffHeading -= 360;
+    if (diffHeading < -180) diffHeading += 360;
+    const curHeading = (startHeading + diffHeading * ease + 360) % 360;
+
+    const curTilt = startTilt + (targetTilt - startTilt) * ease;
+
+    map.moveCamera({
+      center: { lat: curLat, lng: curLng },
+      zoom: curZoom,
+      heading: curHeading,
+      tilt: (map.getMapTypeId() === 'satellite' || map.getMapTypeId() === 'hybrid') ? 0 : curTilt
+    });
+
+    if (progress < 1) {
+      requestAnimationFrame(step);
+    }
+  };
+
+  requestAnimationFrame(step);
+};
+
+/**
+ * Robust nearby highlights service fetching high-quality tourist sights
+ * with fallback placeholder generation.
+ */
+const fetchNearbyHighlights = async (
+  center: google.maps.LatLngLiteral,
+  placesLib: any,
+  mapInstance: any
+) => {
+  if (placesLib && mapInstance) {
+    try {
+      const { places } = await placesLib.Place.searchNearby({
+        locationRestriction: {
+          center: center,
+          radius: 1200
+        },
+        fields: ['id', 'displayName', 'formattedAddress', 'rating', 'userRatingCount', 'types', 'reviews', 'regularOpeningHours', 'photos', 'location'],
+        maxResultCount: 6
+      });
+      if (places && places.length > 0) {
+        return places
+          .filter((p: any) => p.rating && p.rating >= 4.0)
+          .sort((a: any, b: any) => (b.rating || 0) - (a.rating || 0))
+          .slice(0, 4);
+      }
+    } catch (e) {
+      console.warn("Real searchNearby failed, invoking advanced placeholder highlights system:", e);
+    }
+  }
+
+  // Adaptive placeholder Google Places API generator matching context coordinates
+  const syntheticSpots = [
+    {
+      id: `synthetic_cafe_${center.lat.toFixed(3)}_${center.lng.toFixed(3)}`,
+      displayName: "The Neon Grid Café",
+      rating: 4.8,
+      userRatingCount: 312,
+      formattedAddress: `District 4, Near Coordinate ${center.lat.toFixed(3)}N, ${center.lng.toFixed(3)}E`,
+      types: ["cafe", "food", "establishment"],
+      lat: center.lat + 0.0015,
+      lng: center.lng + 0.0012,
+      imageUrl: "https://images.unsplash.com/photo-1554118811-1e0d58224f24?auto=format&fit=crop&w=300&q=80"
+    },
+    {
+      id: `synthetic_bar_${center.lat.toFixed(3)}_${center.lng.toFixed(3)}`,
+      displayName: "Vanti Horizon Lounge",
+      rating: 4.9,
+      userRatingCount: 546,
+      formattedAddress: `Skyline Plaza, Near Coordinate ${center.lat.toFixed(3)}N, ${center.lng.toFixed(3)}E`,
+      types: ["bar", "restaurant", "establishment"],
+      lat: center.lat - 0.0012,
+      lng: center.lng - 0.0018,
+      imageUrl: "https://images.unsplash.com/photo-1514933651103-005eec06c04b?auto=format&fit=crop&w=300&q=80"
+    },
+    {
+      id: `synthetic_park_${center.lat.toFixed(3)}_${center.lng.toFixed(3)}`,
+      displayName: "Quantum Meridian Park",
+      rating: 4.7,
+      userRatingCount: 228,
+      formattedAddress: `Scenic Lookout, Near Coordinate ${center.lat.toFixed(3)}N, ${center.lng.toFixed(3)}E`,
+      types: ["park", "tourist_attraction", "establishment"],
+      lat: center.lat + 0.0021,
+      lng: center.lng - 0.0015,
+      imageUrl: "https://images.unsplash.com/photo-1519331379826-f10be5486c6f?auto=format&fit=crop&w=300&q=80"
+    }
+  ];
+
+  return syntheticSpots;
+};
+
+// A minimal ErrorBoundary for map components to prevent total app crashes
+interface MapErrorBoundaryProps {
+  children: ReactNode;
+}
+interface MapErrorBoundaryState {
+  hasError: boolean;
+}
+
+class MapErrorBoundary extends Component<MapErrorBoundaryProps, MapErrorBoundaryState> {
+  state: MapErrorBoundaryState = { hasError: false };
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-900 text-slate-400 p-8 text-center">
+            <ShieldAlert className="w-12 h-12 text-rose-500 mb-4" />
+            <h2 className="text-xl font-bold text-white mb-2">Map Interface Error</h2>
+            <p className="text-sm max-w-xs">An error occurred while rendering high-precision map markers. Recalibrating spatial engine...</p>
+            <button 
+                onClick={() => window.location.reload()}
+                className="mt-6 px-4 py-2 bg-rose-500 text-white rounded-xl text-xs font-bold uppercase tracking-wider"
+            >
+                Refresh Engine
+            </button>
+        </div>
+      );
+    }
+    return (this as any).props.children;
+  }
+}
+
+// Robust Marker wrapper with map readiness verification and projection error shielding
+const SafeAdvancedMarker = React.memo(function SafeAdvancedMarker(props: any) {
+  const map = useMap();
+  const [isProjectionReady, setIsProjectionReady] = useState(false);
+
+  useEffect(() => {
+    if (!map) return;
+    
+    // Ensure projection is available before rendering any marker
+    // This is the primary safeguard against "fromLatLngToPoint is not a function"
+    const checkProjection = () => {
+      try {
+        const projection = map.getProjection();
+        if (projection) {
+          setIsProjectionReady(true);
+          return;
+        }
+      } catch (err) {
+        console.warn("checkProjection failed under active projection:", err);
+      }
+      // Retry shortly if not ready or threw exception
+      setTimeout(checkProjection, 50);
+    };
+    
+    checkProjection();
+  }, [map]);
+
+  if (!isProjectionReady || !map) return null;
+
+  return (
+    <MapErrorBoundary>
+      <AdvancedMarker {...props}>
+        {props.children}
+      </AdvancedMarker>
+    </MapErrorBoundary>
+  );
+});
+
+/**
+ * Processes a list of markers through a high-performance spatial grid system.
+ * 1) Clips markers that are outside the current map viewport bounds.
+ * 2) Clusters markers within computed grid cells based on zoom level.
+ * 3) Respects power efficiency modes by clustering more aggressively.
+ */
+function processSpatialGrid<T extends { id: any; lat: number; lng: number; displayName?: string; name?: string; photos?: any[] }>(
+  items: T[],
+  zoom: number,
+  center: { lat: number; lng: number } | null | undefined,
+  bounds: google.maps.LatLngBounds | null,
+  isPowerEfficiency: boolean
+): Array<T & { isCluster?: boolean; clusterCount?: number; members?: T[] }> {
+  if (items.length === 0) return [];
+
+  const safeCenter = {
+    lat: center?.lat ?? 37.5665,
+    lng: center?.lng ?? 126.9780
+  };
+
+  // 1. Viewport Clipping Bounds Estimation
+  let minLat = -90, maxLat = 90, minLng = -180, maxLng = 180;
+  const hasValidBounds = bounds && typeof bounds.contains === 'function';
+  
+  if (!hasValidBounds) {
+    const latSpan = 180 / Math.pow(2, Math.max(1, zoom - 2));
+    const lngSpan = 360 / Math.pow(2, Math.max(1, zoom - 2));
+    minLat = safeCenter.lat - latSpan;
+    maxLat = safeCenter.lat + latSpan;
+    minLng = safeCenter.lng - lngSpan;
+    maxLng = safeCenter.lng + lngSpan;
+  }
+
+  // 2. Filter items strictly within viewport (Viewport Clipping)
+  const visibleItems = items.filter(item => {
+    if (hasValidBounds) {
+      try {
+        return bounds.contains({ lat: item.lat, lng: item.lng });
+      } catch (e) {
+        // fall through to bounding box approximation
+      }
+    }
+    return item.lat >= minLat && item.lat <= maxLat && item.lng >= minLng && item.lng <= maxLng;
+  });
+
+  // 3. Grid Cell Size Selection
+  const baseFactor = isPowerEfficiency ? 0.001 : 0.0005;
+  const gridSize = baseFactor * Math.pow(2.2, Math.max(0, 16 - zoom));
+
+  if (zoom >= 16.5 && !isPowerEfficiency) {
+    // Zoomed in close: retain all individual spots to prevent pop-ins but still limit if extremely dense
+    const results = visibleItems.map(item => ({ ...item, isCluster: false }));
+    const maxNodes = 100;
+    if (results.length > maxNodes) {
+      return results
+        .map(r => {
+          const distSq = Math.pow(r.lat - safeCenter.lat, 2) + Math.pow(r.lng - safeCenter.lng, 2);
+          return { item: r, distSq };
+        })
+        .sort((a, b) => a.distSq - b.distSq)
+        .map(entry => entry.item)
+        .slice(0, maxNodes);
+    }
+    return results;
+  }
+
+  // 4. Assign items to Grid Cells (Spatial Hashing)
+  const cellMap: Record<string, T[]> = {};
+  for (const item of visibleItems) {
+    const latCell = Math.floor(item.lat / gridSize);
+    const lngCell = Math.floor(item.lng / gridSize);
+    const key = `${latCell}_${lngCell}`;
+    if (!cellMap[key]) {
+      cellMap[key] = [];
+    }
+    cellMap[key].push(item);
+  }
+
+  // 5. Build clustered and unclustered items from Grid Cells
+  const results: Array<T & { isCluster?: boolean; clusterCount?: number; members?: T[] }> = [];
+
+  for (const cellItems of Object.values(cellMap)) {
+    if (cellItems.length === 1) {
+      results.push({ ...cellItems[0], isCluster: false });
+    } else {
+      const avgLat = cellItems.reduce((sum, m) => sum + m.lat, 0) / cellItems.length;
+      const avgLng = cellItems.reduce((sum, m) => sum + m.lng, 0) / cellItems.length;
+      
+      results.push({
+        ...cellItems[0],
+        lat: avgLat,
+        lng: avgLng,
+        isCluster: true,
+        clusterCount: cellItems.length,
+        members: cellItems
+      });
+    }
+  }
+
+  // 6. Dynamic DOM Node Limiting based on Zoom levels & Power Status to conserve mobile performance
+  const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
+  let maxDomNodes = isMobile ? 40 : 80; // default safe limit
+  if (zoom <= 5) {
+    maxDomNodes = isMobile ? 12 : 20;
+  } else if (zoom <= 8) {
+    maxDomNodes = isMobile ? 18 : 30;
+  } else if (zoom <= 11) {
+    maxDomNodes = isMobile ? 25 : 45;
+  } else if (zoom <= 14) {
+    maxDomNodes = isMobile ? 35 : 65;
+  } else if (zoom <= 16) {
+    maxDomNodes = isMobile ? 50 : 85;
+  } else {
+    maxDomNodes = isMobile ? 65 : 110;
+  }
+
+  if (isPowerEfficiency) {
+    maxDomNodes = Math.floor(maxDomNodes * 0.6); // Clamp tightly in power efficiency mode
+  }
+
+  // If node count exceeds budget, prioritize heavy clusters and center-proximity items
+  if (results.length > maxDomNodes) {
+    return results
+      .map(node => {
+        const clusterWeight = node.isCluster ? (node.clusterCount || 2) * 45 : 1;
+        const distSq = Math.pow(node.lat - safeCenter.lat, 2) + Math.pow(node.lng - safeCenter.lng, 2);
+        // Score: higher cluster weight and lower distance yields higher rating
+        const score = clusterWeight / (distSq + 0.00001);
+        return { node, score };
+      })
+      .sort((a, b) => b.score - a.score)
+      .map(entry => entry.node)
+      .slice(0, maxDomNodes);
+  }
+
+  return results;
+}
+
+const getAestheticFilter = (aesthetic: string): string => {
+  switch (aesthetic) {
+    case 'night':
+      return 'invert(90%) hue-rotate(180deg) brightness(95%) contrast(90%) saturate(85%)';
+    case 'contrast':
+      return 'contrast(140%) saturate(125%) brightness(95%)';
+    case 'minimalist':
+      return 'grayscale(100%) brightness(105%) contrast(115%) opacity(90%)';
+    case 'sepia':
+      return 'sepia(60%) hue-rotate(-15deg) contrast(110%) brightness(95%) saturate(110%)';
+    case 'cyberpunk':
+      return 'hue-rotate(240deg) saturate(220%) contrast(120%) brightness(90%)';
+    case 'none':
+    default:
+      return 'none';
+  }
+};
+
+const BuzzMarker = React.memo(({ 
+  userRatingCount, 
+  isSelected, 
+  activeWeather,
+  mode
+}: { 
+  userRatingCount?: number; 
+  isSelected?: boolean; 
+  activeWeather?: string | null;
+  mode?: string;
+}) => {
+  // Local Buzz is derived from rating counts and social signals
+  const buzz = userRatingCount || 0;
+  // Map buzz to a color spectrum (Indigo/Blue -> Rose/Amber)
+  const hue = Math.min(350, 210 + (Math.sqrt(buzz) / 10) * 14); 
+  const vibrancy = Math.min(100, 60 + (buzz / 1000) * 40);
+  const opacity = Math.min(1, 0.7 + (buzz / 5000));
+  const glow = isSelected ? 15 : Math.min(8, (buzz / 1000) * 4);
+
+  return (
+    <div className="relative group/buzz flex flex-col items-center">
+      <svg 
+        width="32" 
+        height="32" 
+        viewBox="0 0 32 32" 
+        className="drop-shadow-2xl transition-all duration-300"
+        style={{ 
+          filter: `drop-shadow(0 0 ${glow}px hsla(${hue}, ${vibrancy}%, 50%, 0.6))`
+        }}
+      >
+        {/* Outer Ring */}
+        <circle 
+          cx="16" cy="16" r="14" 
+          fill="#0f172a" 
+          stroke={`hsla(${hue}, ${vibrancy}%, 50%, ${opacity})`} 
+          strokeWidth="2" 
+        />
+        {/* Pulsing Core */}
+        <circle 
+          cx="16" cy="16" r="10" 
+          fill={`hsla(${hue}, ${vibrancy}%, 40%, 0.2)`} 
+          className={cn(isSelected && "animate-pulse")}
+        />
+        {/* Geometric Buzz Signature */}
+        <path 
+          d="M16 8 L20 16 L16 24 L12 16 Z" 
+          fill={`hsla(${hue}, ${vibrancy}%, 70%, ${opacity})`}
+          className={isSelected ? "animate-bounce" : ""}
+        />
+        {/* Mode Specific Small Dot */}
+        <circle 
+          cx="16" cy="28" r="2" 
+          fill={mode === 'social' ? '#f43f5e' : mode === 'genius' ? '#f59e0b' : mode === 'perks' ? '#10b981' : '#6366f1'} 
+        />
+      </svg>
+      
+      {/* Local Buzz Indicator */}
+      {buzz > 800 && (
+        <div 
+          className="absolute -top-1 -right-1 px-1 py-0.5 rounded-full bg-slate-950 border border-white/20 flex items-center gap-0.5 shadow-lg scale-75"
+          style={{ borderColor: `hsla(${hue}, ${vibrancy}%, 50%, 0.4)` }}
+        >
+          <Zap className="w-2 h-2 text-amber-400 fill-amber-400" />
+          <span className="text-[6px] font-black text-white uppercase leading-none">Buzz</span>
+        </div>
+      )}
+
+      <WeatherOverlay weather={activeWeather} />
+    </div>
+  );
+});
+
+const VantiMap = React.memo(function VantiMap() {
+  const map = useMap();
+  const map3dRef = useRef<Map3DRef>(null);
+  const placesLib = useMapsLibrary('places');
+  const markerLib = useMapsLibrary('marker');
+  const geometryLib = useMapsLibrary('geometry');
+
+  const activeMode = useVantiStore((state) => state.activeMode);
+  const setActiveMode = useVantiStore((state) => state.setActiveMode);
+  const mapTheme = useVantiStore((state) => state.mapTheme);
+  const setMapTheme = useVantiStore((state) => state.setMapTheme);
+  const showList = useVantiStore((state) => state.showList);
+  const setShowList = useVantiStore((state) => state.setShowList);
+  const selectedPlace = useVantiStore((state) => state.selectedPlace);
+  const setSelectedPlace = useVantiStore((state) => state.setSelectedPlace);
+  const routingOrigin = useVantiStore((state) => state.routingOrigin);
+  const setRoutingOrigin = useVantiStore((state) => state.setRoutingOrigin);
+  const selectedCategory = useVantiStore((state) => state.selectedCategory);
+  const setSelectedCategory = useVantiStore((state) => state.setSelectedCategory);
+  const isOmniaScanning = useVantiStore((state) => state.isOmniaScanning);
+  const setIsOmniaScanning = useVantiStore((state) => state.setIsOmniaScanning);
+  const showControls = useVantiStore((state) => state.showControls);
+  const setShowControls = useVantiStore((state) => state.setShowControls);
+  const themeOverride = useVantiStore((state) => state.themeOverride);
+  const setThemeOverride = useVantiStore((state) => state.setThemeOverride);
+  const recenterToUser = useVantiStore((state) => state.recenterToUser);
+  const recenterTrigger = useVantiStore((state) => state.recenterTrigger);
+  const clearRecenterTrigger = useVantiStore((state) => state.clearRecenterTrigger);
+  const isInitializing = useVantiStore((state) => state.isInitializing);
+  const setIsInitializing = useVantiStore((state) => state.setIsInitializing);
+  const isAROpen = useVantiStore((state) => state.isAROpen);
+  const setIsAROpen = useVantiStore((state) => state.setIsAROpen);
+  const units = useVantiStore((state) => state.units);
+  const setUnits = useVantiStore((state) => state.setUnits);
+  const mapStyle = useVantiStore((state) => state.mapStyle);
+  const setMapStyle = useVantiStore((state) => state.setMapStyle);
+  const mapAesthetic = useVantiStore((state) => state.mapAesthetic);
+  const setMapAesthetic = useVantiStore((state) => state.setMapAesthetic);
+  const isCinematicMode = useVantiStore((state) => state.isCinematicMode);
+  const setIsCinematicMode = useVantiStore((state) => state.setIsCinematicMode);
+  const language = useVantiStore((state) => state.language);
+  const setLanguage = useVantiStore((state) => state.setLanguage);
+
+  const showWeatherLayer = useVantiStore((state) => state.showWeatherLayer);
+  const setShowWeatherLayer = useVantiStore((state) => state.setShowWeatherLayer);
+  const weatherLayerType = useVantiStore((state) => state.weatherLayerType);
+  const setWeatherLayerType = useVantiStore((state) => state.setWeatherLayerType);
+
+  const t = getTranslation(language);
+
+  useEffect(() => {
+    if (map && placesLib && markerLib && geometryLib) {
+      const timer = setTimeout(() => {
+        setIsInitializing(false);
+      }, 1800); // 1.8-second telemetry calibration sequence
+      return () => clearTimeout(timer);
+    }
+  }, [map, placesLib, markerLib, geometryLib, setIsInitializing]);
+
+  const [is3DActive, setIs3DActive] = useState(false);
+  const [isMapIdle, setIsMapIdle] = useState(false);
+  const [expandedClusterId, setExpandedClusterId] = useState<string | null>(null);
+  const [hoveredClusterId, setHoveredClusterId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (recenterTrigger && map) {
+      if (is3DActive) {
+        map.panTo(recenterTrigger);
+        map.setZoom(16.5);
+      } else {
+        animateFlyTo(map, recenterTrigger, 16.5, 0, 35, 1200);
+      }
+      setUserLocation(recenterTrigger);
+      clearRecenterTrigger();
+    }
+  }, [recenterTrigger, map, clearRecenterTrigger, is3DActive]);
+
+  useEffect(() => {
+    if (!map) return;
+    const l = map.addListener('idle', () => setIsMapIdle(true));
+    return () => l.remove();
+  }, [map]);
+
+  const handlePoiClickRef = useRef<any>(null);
+  const handleQuickSaveBookmarkRef = useRef<any>(null);
+  const [quickSaveStatus, setQuickSaveStatus] = useState<{
+    status: 'idle' | 'saving' | 'success' | 'error';
+    message: string;
+    locationName?: string;
+  }>({ status: 'idle', message: '' });
+
+  const [queryText, setQueryText] = useState('');
+  const [suggestions, setSuggestions] = useState<google.maps.places.AutocompleteSuggestion[]>([]);
+  const [sessionToken, setSessionToken] = useState<google.maps.places.AutocompleteSessionToken | null>(null);
+  const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [kmlLayer, setKmlLayer] = useState<google.maps.KmlLayer | null>(null);
+  const [places, setPlaces] = useState<google.maps.places.Place[]>([]);
+  const [searchFilter, setSearchFilter] = useState<'all' | 'nearby' | 'high_rated' | 'open_now'>('all');
+  const [savedPlaces, setSavedPlaces] = useState<any[]>([]);
+  const [showingSaved, setShowingSaved] = useState(false);
+  const [isSearching, setIsSearching] = useState(false);
+  const [userLocation, setUserLocation] = useState<google.maps.LatLngLiteral | null>(DEFAULT_CENTER);
+  const [user, setUser] = useState<FirebaseUser | null>(null);
+  const [offlineAreas, setOfflineAreas] = useState<OfflineArea[]>([]);
+
+  // States for Recent Searches (persisted both locally and in Firestore)
+  const [recentSearches, setRecentSearches] = useState<{ id: string; query: string; timestamp: number }[]>([]);
+  const [localRecentSearches, setLocalRecentSearches] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('vanti_recent_searches');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  // Standard OperationType for Firestore compliance
+  const OP_GET = 'get' as any;
+  const OP_CREATE = 'create' as any;
+  const OP_DELETE = 'delete' as any;
+
+  const saveSearchQuery = async (queryTextVal: string) => {
+    const trimmed = queryTextVal.trim();
+    if (!trimmed) return;
+
+    // A. Update local storage cache
+    let newLocals = [trimmed, ...localRecentSearches.filter(q => q.toLowerCase() !== trimmed.toLowerCase())].slice(0, 5);
+    setLocalRecentSearches(newLocals);
+    try {
+      localStorage.setItem('vanti_recent_searches', JSON.stringify(newLocals));
+    } catch (e) {}
+
+    // B. Save to user's remote firestore collection
+    if (user) {
+      try {
+        const dup = recentSearches.find(rs => rs.query.toLowerCase() === trimmed.toLowerCase());
+        if (dup) {
+          const docRef = doc(db, 'users', user.uid, 'recentSearches', dup.id);
+          await setDoc(docRef, { query: trimmed, timestamp: Date.now() }, { merge: true });
+          return;
+        }
+
+        const searchId = `search-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+        const docRef = doc(db, 'users', user.uid, 'recentSearches', searchId);
+        await setDoc(docRef, { query: trimmed, timestamp: Date.now() });
+
+        // Maintain only top 5 limit in the remote Firestore
+        if (recentSearches.length >= 5) {
+          const sorted = [...recentSearches].sort((a, b) => a.timestamp - b.timestamp);
+          const overflowCount = (recentSearches.length + 1) - 5;
+          for (let i = 0; i < overflowCount; i++) {
+            if (sorted[i]) {
+              await deleteDoc(doc(db, 'users', user.uid, 'recentSearches', sorted[i].id));
+            }
+          }
+        }
+      } catch (err) {
+        console.error("Failed to save search query to Firestore", err);
+      }
+    }
+  };
+
+  const handleClearSearches = async () => {
+    setLocalRecentSearches([]);
+    try {
+      localStorage.removeItem('vanti_recent_searches');
+    } catch {}
+
+    if (user) {
+      try {
+        for (const rs of recentSearches) {
+          await deleteDoc(doc(db, 'users', user.uid, 'recentSearches', rs.id));
+        }
+      } catch (err) {
+        console.error("Failed to clear searches from Firestore", err);
+      }
+    }
+  };
+
+  // Automated Geofencing Welcome Banner State
+  const [geofenceWelcome, setGeofenceWelcome] = useState<'Seoul' | 'Canada' | null>(null);
+  const [showWelcomeBanner, setShowWelcomeBanner] = useState(false);
+
+  // Interactive Features State for GNB Modes
+  const [scratchedCoupons, setScratchedCoupons] = useState<string[]>([]);
+
+  const [pingKey, setPingKey] = useState(0);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setPingKey(prev => prev + 1);
+    }, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const [pingLatency, setPingLatency] = useState(42);
+  const [isQuantumScanning, setIsQuantumScanning] = useState(false);
+  const [quantumScannerLogs, setQuantumScannerLogs] = useState<string[]>([]);
+  const [socialMeetpoint, setSocialMeetpoint] = useState<{ lat: number, lng: number, name: string } | null>(null);
+
+  // [PLACE-ME DNA]: Background tracking simulation for cinematic EOD recap
+  const [isRecording, setIsRecording] = useState(false);
+  const [trajectory, setTrajectory] = useState<google.maps.LatLngLiteral[]>([]);
+  const [showEodMovie, setShowEodMovie] = useState(false);
+
+  const simulateEodMovie = async () => {
+    if (trajectory.length < 2) return;
+    setShowEodMovie(true);
+    triggerHaptic('success');
+    
+    if (map3dRef.current) {
+        const m3d = map3dRef.current as any;
+        await m3d.flyTo({ center: { ...trajectory[0], altitude: 5000 }, tilt: 0, durationMillis: 2000 });
+        for (let i = 0; i < trajectory.length; i++) {
+           await m3d.flyTo({
+               center: { ...trajectory[i], altitude: 320 },
+               tilt: 65,
+               heading: (i * 25) % 360,
+               durationMillis: 1800
+           });
+        }
+    }
+  };
+
+
+
+  const triggerHaptic = (type: HapticType) => {
+    if (typeof navigator !== 'undefined' && navigator.vibrate) {
+      try {
+        const factor = hapticIntensity / 50;
+        if (type === 'tap') navigator.vibrate(10 * factor); // Crisp click
+        else if (type === 'switch') navigator.vibrate([8, 15, 8].map(v => v * factor)); // Precise physical double-click ripple for GNB switches
+        else if (type === 'success') navigator.vibrate([15, 30, 15, 30, 40].map(v => v * factor)); // Rich alert success
+        else if (type === 'close') navigator.vibrate([10, 30, 10].map(v => v * factor));
+        else if (type === 'open_panel') navigator.vibrate([8, 20, 12].map(v => v * factor));
+        else if (type === 'mode3d') navigator.vibrate([15, 25, 20].map(v => v * factor));
+      } catch (e) {
+        // ignore if not supported
+      }
+    }
+  };
+
+  const reverseGeocode = useCallback((lat: number, lng: number): Promise<string> => {
+    return new Promise((resolve) => {
+      try {
+        const geocoder = new google.maps.Geocoder();
+        geocoder.geocode({ location: { lat, lng } }, (results, status) => {
+          if (status === 'OK' && results && results[0]) {
+            resolve(results[0].formatted_address || `${lat.toFixed(5)}, ${lng.toFixed(5)}`);
+          } else {
+            resolve(`Location (${lat.toFixed(4)}, ${lng.toFixed(4)})`);
+          }
+        });
+      } catch (e) {
+        resolve(`Location (${lat.toFixed(4)}, ${lng.toFixed(4)})`);
+      }
+    });
+  }, []);
+
+  const handleQuickSaveBookmark = useCallback(async (lat: number, lng: number, spotName?: string) => {
+    triggerHaptic('success');
+    if (!user) {
+      setQuickSaveStatus({
+        status: 'error',
+        message: 'Authentication required. Please sign in to save location bookmarks to your Travel Diary.'
+      });
+      setTimeout(() => setQuickSaveStatus({ status: 'idle', message: '' }), 5000);
+      return;
+    }
+
+    setQuickSaveStatus({
+      status: 'saving',
+      message: spotName ? `Saving "${spotName}"...` : `Geocoding coordinates: ${lat.toFixed(4)}, ${lng.toFixed(4)}...`
+    });
+
+    try {
+      const locationName = spotName || await reverseGeocode(lat, lng);
+      setQuickSaveStatus({
+        status: 'saving',
+        message: `Saving "${locationName}" to Travel Diary...`
+      });
+
+      const path = 'travelSnapshots';
+      const snapshotRef = doc(collection(db, path));
+      const payload = {
+        userId: user.uid,
+        userDisplayName: user.displayName || 'Anonymous Explorer',
+        userPhotoURL: user.photoURL || '',
+        text: spotName ? `📍 Saved hotspot: ${spotName}. Added to my VANTi Travel Diary for future explorations!` : `📍 Instantly bookmarked this beautiful location near ${locationName} through map long-press / context menu override. Perfect spot for future journeys!`,
+        imageUrl: 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?auto=format&fit=crop&w=400&q=80', // Default gorgeous Neon Kyoto preset
+        locationName: locationName,
+        lat: Number(lat),
+        lng: Number(lng),
+        createdAt: Date.now()
+      };
+
+      await setDoc(snapshotRef, payload);
+
+      setQuickSaveStatus({
+        status: 'success',
+        message: `Successfully bookmarked!`,
+        locationName: locationName
+      });
+      setTimeout(() => setQuickSaveStatus({ status: 'idle', message: '' }), 4000);
+    } catch (err: any) {
+      console.error(err);
+      setQuickSaveStatus({
+        status: 'error',
+        message: 'Failed to save pinned location bookmark.'
+      });
+      setTimeout(() => setQuickSaveStatus({ status: 'idle', message: '' }), 5000);
+    }
+  }, [user, reverseGeocode, triggerHaptic]);
+
+  // Check if current area is cached
+  useEffect(() => {
+    if (!map || offlineAreas.length === 0) {
+      setIsCurrentAreaCached(false);
+      return;
+    }
+    const checkCache = () => {
+      const bounds = map.getBounds();
+      if (!bounds) return;
+      const center = bounds.getCenter();
+      const isInside = offlineAreas.some(area => {
+        const areaBounds = new google.maps.LatLngBounds(
+          { lat: area.bounds.south, lng: area.bounds.west },
+          { lat: area.bounds.north, lng: area.bounds.east }
+        );
+        return areaBounds.contains(center);
+      });
+      setIsCurrentAreaCached(prev => prev === isInside ? prev : isInside);
+    };
+    const listener = map.addListener('idle', checkCache);
+    checkCache();
+    return () => listener.remove();
+  }, [map, offlineAreas]);
+
+  // Accessibility: Dynamic Text Sizing based on window/system (simulated via store or window)
+  useEffect(() => {
+    const updateScale = () => {
+      const fontSize = parseFloat(getComputedStyle(document.documentElement).fontSize);
+      setMapScaleFixed(fontSize / 16);
+    };
+    window.addEventListener('resize', updateScale);
+    updateScale();
+    return () => window.removeEventListener('resize', updateScale);
+  }, []);
+
+  useEffect(() => {
+    if (!map) return;
+    const l = map.addListener('contextmenu', (e: google.maps.MapMouseEvent) => {
+      if (e.latLng) {
+        triggerHaptic('success');
+        handleQuickSaveBookmark(e.latLng.lat(), e.latLng.lng());
+      }
+    });
+
+    let longPressTimer: any;
+    const touchListener = map.addListener('mousedown', (e: any) => {
+      longPressTimer = setTimeout(() => {
+        if (e.latLng) {
+          triggerHaptic('success');
+          handleQuickSaveBookmark(e.latLng.lat(), e.latLng.lng());
+        }
+      }, 700);
+    });
+    const upListener = map.addListener('mouseup', () => clearTimeout(longPressTimer));
+    const dragListener = map.addListener('dragstart', () => clearTimeout(longPressTimer));
+
+    return () => {
+      l.remove();
+      touchListener.remove();
+      upListener.remove();
+      dragListener.remove();
+    };
+  }, [map, handleQuickSaveBookmark]);
+
+  const [hapticIntensity, setHapticIntensity] = useState(50);
+
+  // Zoom velocity refs & interactive tactile feedback handler
+  const lastZoomRef = useRef(16);
+  const lastZoomTimeRef = useRef(Date.now());
+
+  const handleZoomChangeHaptic = useCallback((newZoom: number) => {
+    const now = Date.now();
+    const dt = now - lastZoomTimeRef.current;
+    const dz = Math.abs(newZoom - lastZoomRef.current);
+    lastZoomRef.current = newZoom;
+    lastZoomTimeRef.current = now;
+
+    if (dt > 12 && dz > 0.008) {
+      const velocity = dz / dt; // zoom change per millisecond
+      if (velocity > 0.0004) {
+        if (typeof navigator !== 'undefined' && navigator.vibrate) {
+          try {
+            const intensityFactor = hapticIntensity / 50;
+            const duration = Math.min(45, Math.max(4, Math.round(velocity * 8000 * intensityFactor)));
+            if (duration > 18) {
+              // High velocity zoom / quick scroll - double dynamic tap
+              navigator.vibrate([duration, 10, Math.round(duration * 0.75)]);
+            } else {
+              // Fine low-velocity scrolling tactile click
+              navigator.vibrate(duration);
+            }
+          } catch (e) {}
+        }
+      }
+    }
+  }, [hapticIntensity]);
+  const [aiSuiteOpen, setAiSuiteOpen] = useState(false);
+  const [showRoutePlanner, setShowRoutePlanner] = useState(false);
+  const [markerTheme, setMarkerTheme] = useState<'minimalist' | 'glow' | 'classic'>('minimalist');
+  const [routeStyle, setRouteStyle] = useState<'classic' | 'traffic'>('classic');
+  const [showTrafficLayer, setShowTrafficLayer] = useState(true);
+  const [showPinsLayer, setShowPinsLayer] = useState(true);
+  const [mapCenter, setMapCenter] = useState<google.maps.LatLngLiteral>(DEFAULT_CENTER);
+  const [debouncedCenter, setDebouncedCenter] = useState<google.maps.LatLngLiteral>(DEFAULT_CENTER);
+
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedCenter(mapCenter);
+    }, 600); // Debounce to prevent rapid polling of OpenMeteo API when dragging/panning
+    return () => clearTimeout(handler);
+  }, [mapCenter]);
+  const [popularSearches, setPopularSearches] = useState<string[]>(['Popular spot near you', 'Trending coffee shops', 'Nearby parks']);
+  const [generatingVideo, setGeneratingVideo] = useState(false);
+  const [generatedVideoUrl, setGeneratedVideoUrl] = useState<string | null>(null);
+  const [mapZoom, setMapZoom] = useState(16);
+  const [mapBounds, setMapBounds] = useState<google.maps.LatLngBounds | null>(null);
+  const [mapHeading, setMapHeading] = useState(0);
+  const [mapTilt, setMapTilt] = useState(45);
+  const [mapType, setMapType] = useState<'roadmap' | 'satellite' | 'hybrid' | 'terrain'>('roadmap');
+  const [isDeveloperInsightsOpen, setIsDeveloperInsightsOpen] = useState(false);
+  const [diaryCount, setDiaryCount] = useState(0);
+  const [isTransitioningStyle, setIsTransitioningStyle] = useState(false);
+  const [transitionTargetStyle, setTransitionTargetStyle] = useState<'streets' | 'satellite'>('streets');
+  const prevMapTypeRef = useRef(mapType);
+
+  useEffect(() => {
+    if (prevMapTypeRef.current !== mapType) {
+      const isSat = mapType === 'satellite' || mapType === 'hybrid';
+      const wasSat = prevMapTypeRef.current === 'satellite' || prevMapTypeRef.current === 'hybrid';
+      
+      if (isSat !== wasSat) {
+        setTransitionTargetStyle(isSat ? 'satellite' : 'streets');
+        setIsTransitioningStyle(true);
+        triggerHaptic('impact');
+        
+        const timer = setTimeout(() => {
+          setIsTransitioningStyle(false);
+        }, 750);
+        
+        prevMapTypeRef.current = mapType;
+        return () => clearTimeout(timer);
+      }
+      prevMapTypeRef.current = mapType;
+    }
+  }, [mapType]);
+
+  const [isTerrainActive, setIsTerrainActive] = useState(true);
+  const [isFlightMode, setIsFlightMode] = useState(false);
+  const [showLegend, setShowLegend] = useState(false);
+  const [mapScaleFixed, setMapScaleFixed] = useState(1); // For dynamic text sizing
+  const [isCurrentAreaCached, setIsCurrentAreaCached] = useState(false);
+  const [perspectiveLock, setPerspectiveLock] = useState(false);
+  const [isPowerEfficiencyEnabled, setIsPowerEfficiencyEnabled] = useState(false);
+  const [showPois, setShowPois] = useState(true);
+  
+  // Nearby Highlights Summary Card state and logic
+  const [nearbyHighlights, setNearbyHighlights] = useState<any[]>([]);
+  const [loadingHighlights, setLoadingHighlights] = useState(false);
+  const [isHighlightsExpanded, setIsHighlightsExpanded] = useState(false);
+  const [bookmarkedSpotIds, setBookmarkedSpotIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (mapZoom < 15.5) {
+      setNearbyHighlights([]);
+      return;
+    }
+
+    let active = true;
+    async function getSpots() {
+      setLoadingHighlights(true);
+      try {
+        const spots = await fetchNearbyHighlights(debouncedCenter, placesLib, map);
+        if (active) {
+          setNearbyHighlights(spots);
+        }
+      } catch (err) {
+        console.warn("Failed to load nearby highlights:", err);
+      } finally {
+        if (active) setLoadingHighlights(false);
+      }
+    }
+    getSpots();
+
+    return () => {
+      active = false;
+    };
+  }, [debouncedCenter, mapZoom, placesLib, map]);
+
+  // Cinematic Mode Animation Loop
+  useEffect(() => {
+    if (!isCinematicMode || !map) return;
+
+    let frameId: number;
+    let currentHeading = map.getHeading() || 0;
+    
+    const animate = (time: number) => {
+      currentHeading += 0.08; // Ultra-slow subtle rotation
+      const driftTilt = 45 + Math.sin(time / 4000) * 8;
+      
+      map.moveCamera({
+        heading: currentHeading % 360,
+        tilt: driftTilt
+      });
+
+      frameId = requestAnimationFrame(animate);
+    };
+
+    frameId = requestAnimationFrame(animate);
+
+    return () => {
+      cancelAnimationFrame(frameId);
+    };
+  }, [isCinematicMode, map]);
+
+  // Handle Map3D camera changes to update global state
+  const handleMap3DCameraChange = useCallback((e: any) => {
+    const { center, heading, tilt, range } = e.detail;
+    const zoomConstant = 150;
+    const calculatedZoom = 21 - Math.log2(range / zoomConstant);
+
+    setMapCenter(prev => {
+        if (Math.abs(prev.lat - center.lat) < 1e-7 && Math.abs(prev.lng - center.lng) < 1e-7) return prev;
+        return { lat: center.lat, lng: center.lng };
+    });
+    setMapHeading(prev => Math.abs(prev - heading) < 0.1 ? prev : heading);
+    setMapTilt(prev => Math.abs(prev - tilt) < 0.1 ? prev : tilt);
+    setMapZoom(prev => Math.abs(prev - calculatedZoom) < 0.01 ? prev : calculatedZoom);
+    handleZoomChangeHaptic(calculatedZoom);
+  }, [handleZoomChangeHaptic]);
+  const [isTransitioning3D, setIsTransitioning3D] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState(0);
+  const [downloadStage, setDownloadStage] = useState('');
+  const [activeHubTab, setActiveHubTab] = useState<'hub' | 'diary' | 'planner' | 'offline'>('hub');
+
+  useEffect(() => {
+    if (activeMode === 'planner' && activeHubTab !== 'planner') {
+      setActiveHubTab('planner');
+    } else if (activeMode === 'profile' && activeHubTab !== 'diary') {
+      setActiveHubTab('diary');
+    }
+  }, [activeMode]);
+  const [downloadSuccess, setDownloadSuccess] = useState(false);
+  const [editingAreaId, setEditingAreaId] = useState<string | null>(null);
+  const [editingAreaName, setEditingAreaName] = useState('');
+  const [showStyleSwitcher, setShowStyleSwitcher] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
+  const [lastFlyoverId, setLastFlyoverId] = useState<string | null>(null);
+  const [showSpeedometer, setShowSpeedometer] = useState(true);
+  const [showWeatherOverlay, setShowWeatherOverlay] = useState(true);
+  const [showTrendingPins, setShowTrendingPins] = useState(true);
+  const [openWeatherMapData, setOpenWeatherMapData] = useState<any>(null);
+  const [isLoadingOpenWeather, setIsLoadingOpenWeather] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    async function loadOpenWeather() {
+      setIsLoadingOpenWeather(true);
+      try {
+        const res = await fetch(`/api/weather/openweathermap/${debouncedCenter.lat.toFixed(4)}/${debouncedCenter.lng.toFixed(4)}`);
+        const data = await res.json();
+        if (active) {
+          setOpenWeatherMapData(data);
+        }
+      } catch (err) {
+        console.warn("Failed to load map center OpenWeatherMap:", err);
+      } finally {
+        if (active) setIsLoadingOpenWeather(false);
+      }
+    }
+    loadOpenWeather();
+    return () => {
+      active = false;
+    };
+  }, [debouncedCenter]);
+
+  // Cinematic Flyover Logic
+  const triggerFlyover = useCallback((place: any) => {
+    if (is3DActive && map3dRef.current) {
+        const m3d = map3dRef.current as any;
+        m3d.flyTo({
+            center: { lat: place.lat, lng: place.lng, altitude: 400 },
+            tilt: 65,
+            heading: (mapHeading + (Math.random() > 0.5 ? 45 : -45)) % 360,
+            range: 1000,
+            durationMillis: 2500
+        });
+    } else if (map) {
+        map.moveCamera({
+            center: { lat: place.lat, lng: place.lng },
+            tilt: 55,
+            heading: (mapHeading + 30) % 360,
+            zoom: 18
+        });
+    }
+  }, [is3DActive, map, mapHeading]);
+
+
+  // Automated theme switcher based on local time
+  useEffect(() => {
+    if (themeOverride !== 'Auto') return;
+
+    const updateTheme = () => {
+      const hour = new Date().getHours();
+      // Night mode active after 18:00 (6 PM) or before 06:00 (6 AM)
+      const shouldBeNight = hour >= 18 || hour < 6;
+      setMapTheme(shouldBeNight ? 'Night' : 'Default');
+    };
+
+    updateTheme();
+    // Check every hour for theme transition
+    const interval = setInterval(updateTheme, 3600000);
+    return () => clearInterval(interval);
+  }, [themeOverride]);
+
+  // Handle manual theme override changes
+  useEffect(() => {
+    if (themeOverride === 'Light') {
+      setMapTheme('Default');
+    } else if (themeOverride === 'Dark') {
+      setMapTheme('Night');
+    }
+    // 'Auto' is handled by the first effect
+  }, [themeOverride]);
+
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobile(window.innerWidth < 768);
+    };
+    handleResize();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+
+  // Dynamic HUD background tint based on zoom: navy color (altitude zoom 12) -> charcoal (street zoom 19)
+  const getDynamicHudBackground = () => {
+    const minZoom = 12;
+    const maxZoom = 19;
+    const clampedZoom = Math.min(maxZoom, Math.max(minZoom, mapZoom));
+    const fraction = (clampedZoom - minZoom) / (maxZoom - minZoom); // 0 (altitude) to 1 (street)
+
+    // Dark Navy RGB at altitude: (6, 12, 34)
+    // Sharp Charcoal RGB at street: (18, 20, 24)
+    const r = Math.round(6 + (18 - 6) * fraction);
+    const g = Math.round(12 + (20 - 12) * fraction);
+    const b = Math.round(34 + (24 - 34) * fraction);
+
+    return `rgba(${r}, ${g}, ${b}, 0.45)`;
+  };
+
+  // Telemetry Ping Updates
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setPingLatency(Math.floor(35 + Math.random() * 12));
+    }, 3000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const MAP_STYLES = {
+    'Default': [
+      { featureType: 'poi', elementType: 'labels.text.fill', stylers: [{ opacity: 0.2 }] },
+      { featureType: 'poi', elementType: 'labels.icon', stylers: [{ opacity: 0.2 }] },
+      { featureType: 'road', elementType: 'labels.text.fill', stylers: [{ opacity: 0.2 }] }
+    ],
+    'Night': [
+      { elementType: 'geometry', stylers: [{ color: '#1a1c23' }] },
+      { elementType: 'labels.text.stroke', stylers: [{ color: '#1a1c23' }] },
+      { elementType: 'labels.text.fill', stylers: [{ color: '#746855' }] },
+      { featureType: 'administrative', elementType: 'labels.text.fill', stylers: [{ color: '#d59563' }] },
+      // DE-CLUTTER: Fade out standard POI labels to spotlight vanT partners
+      { featureType: 'poi', elementType: 'labels.text.fill', stylers: [{ color: '#d59563' }, { opacity: 0.15 }] },
+      { featureType: 'poi', elementType: 'labels.icon', stylers: [{ opacity: 0.15 }] },
+      { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#2b2e3a' }] },
+      { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#1a1c23' }] },
+      { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#3c4151' }] },
+      { featureType: 'road', elementType: 'labels.text.fill', stylers: [{ opacity: 0.2 }] },
+      { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0e1117' }] }
+    ],
+    'Silver': [
+      { elementType: 'geometry', stylers: [{ color: '#f5f5f5' }] },
+      { elementType: 'labels.icon', stylers: [{ visibility: 'off' }] },
+      { elementType: 'labels.text.fill', stylers: [{ color: '#9e9e9e' }] },
+      { elementType: 'labels.text.stroke', stylers: [{ color: '#f5f5f5' }] },
+      { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#ffffff' }] },
+      { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#e9e9e9' }] }
+    ],
+    'Retro': [
+      { elementType: 'geometry', stylers: [{ color: '#ebe3cd' }] },
+      { elementType: 'labels.text.fill', stylers: [{ color: '#523735' }] },
+      { elementType: 'labels.text.stroke', stylers: [{ color: '#f5f1e6' }] },
+      { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#f5f1e6' }] },
+      { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#f8c967' }] },
+      { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#dfd2ae' }] }
+    ],
+    'Simulation': [
+      { elementType: 'geometry', stylers: [{ color: '#000000' }] },
+      { elementType: 'labels.icon', stylers: [{ visibility: 'off' }] },
+      { elementType: 'labels.text.fill', stylers: [{ color: '#00ff41' }] },
+      { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#003b00' }, { weight: 3 }] },
+      { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#008f11' }] },
+      { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#001100' }] },
+      { featureType: 'poi', elementType: 'geometry', stylers: [{ color: '#002200' }] }
+    ],
+    'Genie': [
+      { elementType: 'geometry', stylers: [{ color: '#08081a' }] },
+      { elementType: 'labels.text.fill', stylers: [{ color: '#f0abfc' }] },
+      { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#2e1065' }, { weight: 2 }] },
+      { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#4c1d95' }] },
+      { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#1e1b4b' }] },
+      { featureType: 'poi', elementType: 'labels.text.fill', stylers: [{ color: '#818cf8' }] },
+      { featureType: 'transit', elementType: 'geometry', stylers: [{ color: '#2e1065' }] }
+    ],
+    'Cosmic': [
+      { elementType: 'geometry', stylers: [{ color: '#020617' }] },
+      { elementType: 'labels.text.fill', stylers: [{ color: '#94a3b8' }] },
+      { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#1e293b' }] },
+      { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0f172a' }] },
+      { featureType: 'poi', elementType: 'geometry', stylers: [{ color: '#1e293b' }] },
+      { featureType: 'poi.park', elementType: 'geometry', stylers: [{ color: '#064e3b' }] }
+    ],
+    'Neo-Tokyo': [
+      { elementType: 'geometry', stylers: [{ color: '#130d1e' }] },
+      { elementType: 'labels.text.fill', stylers: [{ color: '#ff00ff' }] },
+      { elementType: 'labels.text.stroke', stylers: [{ color: '#000000' }] },
+      { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#00ffff' }, { weight: 1 }] },
+      { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#ff00ff' }, { weight: 2 }] },
+      { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#001133' }] },
+      { featureType: 'poi', elementType: 'labels.icon', stylers: [{ hue: '#ff00ff' }] }
+    ],
+    'Midnight': [
+      { elementType: 'geometry', stylers: [{ color: '#020617' }] },
+      { elementType: 'labels.text.fill', stylers: [{ color: '#94a3b8' }] },
+      { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#1e293b' }] },
+      { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0f172a' }] },
+      { featureType: 'poi.park', elementType: 'geometry', stylers: [{ color: '#312e81' }] },
+      { featureType: 'transit', stylers: [{ visibility: 'off' }] }
+    ],
+    'Sketch': [
+      { elementType: 'geometry', stylers: [{ color: '#fafaf9' }] },
+      { elementType: 'labels.text.fill', stylers: [{ color: '#444444' }] },
+      { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#e5e5e5' }, { weight: 1 }] },
+      { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#dcfce7' }] },
+      { featureType: 'landscape', elementType: 'geometry', stylers: [{ color: '#fafaf9' }] }
+    ]
+  };
+
+  const [agentMarkers, setAgentMarkers] = useState<any[]>([]);
+  const [activeWeather, setActiveWeather] = useState<string | null>(null);
+
+  const handleMapCommand = (name: string, args: any) => {
+    if (!map) return;
+    
+    switch(name) {
+      case 'recenterMap':
+        triggerHaptic('switch');
+        setIsTransitioning3D(true);
+        if (is3DActive) {
+          map.panTo({ lat: args.lat, lng: args.lng });
+          if (args.zoom) map.setZoom(args.zoom);
+          if (args.tilt !== undefined) map.setTilt(args.tilt);
+          else map.setTilt(55);
+        } else {
+          animateFlyTo(map, { lat: args.lat, lng: args.lng }, args.zoom || 16.5, args.tilt || 0, 35, 1200);
+        }
+        setTimeout(() => setIsTransitioning3D(false), 1200);
+        break;
+      case 'setWeather':
+        triggerHaptic('tap');
+        setActiveWeather(args.condition);
+        break;
+      case 'setFlightMode':
+        triggerHaptic('mode3d');
+        setIsFlightMode(args.active);
+        if (args.active && map) {
+            map.setTilt(65);
+            map.setZoom(17);
+        } else if (map) {
+            map.setHeading(0);
+        }
+        break;
+      case 'setMapMode':
+        triggerHaptic('switch');
+        if (args.mode === '3D' || args.mode === '2D') {
+            const active = args.mode === '3D';
+            setIs3DActive(active);
+            if (map) {
+              map.moveCamera({
+                tilt: active ? 67.5 : 0,
+                heading: (map.getHeading() || 0) + (active ? 25 : -25),
+                zoom: Math.max(map.getZoom() || 17, active ? 17.5 : 15)
+              });
+            }
+        } else if (args.mode === 'Terrain' || args.mode === 'Flat') {
+            setIsTerrainActive(args.mode === 'Terrain');
+        }
+        break;
+      case 'setMapStyle':
+        setMapTheme(args.style);
+        triggerHaptic('mode3d');
+        setIsTransitioning3D(true);
+        
+        if (args.style === 'Genie') {
+          map.setTilt(75);
+          map.setHeading(map.getHeading() + 45);
+        } else if (args.style === 'Simulation') {
+          map.setTilt(45);
+          map.setHeading(180);
+        } else if (args.style === 'Cosmic') {
+          map.setTilt(85);
+          map.setZoom(map.getZoom() - 1);
+        } else if (args.style === 'Neo-Tokyo') {
+          map.setTilt(60);
+          map.setHeading(-20);
+        } else {
+          map.setTilt(0);
+          map.setHeading(0);
+        }
+        
+        setTimeout(() => setIsTransitioning3D(false), 1200);
+        break;
+      case 'showPlaces':
+        triggerHaptic('impact');
+        setAgentMarkers(args.places);
+        if (args.places.length > 0) {
+            const bounds = new google.maps.LatLngBounds();
+            args.places.forEach((p: any) => bounds.extend({ lat: p.lat, lng: p.lng }));
+            map.fitBounds(bounds, { top: 100, bottom: 100, left: 100, right: 100 });
+        }
+        break;
+      case 'showRoute':
+        // Implementation for showing route
+        setQueryText(args.destination);
+        handleSearch();
+        break;
+    }
+  };
+
+  useEffect(() => {
+    if (activeMode === 'profile') {
+      getOfflineAreas().then(setOfflineAreas).catch(console.error);
+    }
+  }, [activeMode]);
+
+  useEffect(() => {
+    if (!map) return;
+    const listener = map.addListener('idle', () => {
+      const center = map.getCenter()?.toJSON();
+      if (center) {
+        // Only trigger side effects that aren't handling internal map sync
+        setPopularSearches([
+          `Trending in ${Math.round(center.lat * 1000) / 1000}, ${Math.round(center.lng * 1000) / 1000}`,
+          'Top rated nearby',
+          'Hidden gems in viewport'
+        ]);
+      }
+    });
+
+    const clickListener = map.addListener('click', (event: any) => {
+      if (event && event.placeId) {
+        event.stop(); // Stops standard Google Maps popup card and external web redirect
+        if (handlePoiClickRef.current) {
+          handlePoiClickRef.current(event); // Natively opens details on this map
+        }
+      }
+    });
+
+    const contextListener = map.addListener('contextmenu', (event: any) => {
+      if (event && event.latLng) {
+        if (handleQuickSaveBookmarkRef.current) {
+          handleQuickSaveBookmarkRef.current(event.latLng.lat(), event.latLng.lng());
+        }
+      }
+    });
+
+    return () => {
+      listener.remove();
+      clickListener.remove();
+      contextListener.remove();
+    };
+  }, [map]);
+
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
+
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (u) => setUser(u));
+    return () => unsub();
+  }, []);
+
+  // Sync / Load preferences from Firestore on login
+  useEffect(() => {
+    if (!user) return;
+    const loadPreferences = async () => {
+      try {
+        const userRef = doc(db, 'users', user.uid);
+        const snapshot = await getDoc(userRef);
+        if (snapshot.exists()) {
+          const data = snapshot.data();
+          if (data.units) setUnits(data.units);
+          if (data.mapStyle) {
+            setMapStyle(data.mapStyle);
+            setMapType(data.mapStyle === 'satellite' ? 'satellite' : 'roadmap');
+          }
+          if (data.mapAesthetic) setMapAesthetic(data.mapAesthetic);
+          if (data.language) setLanguage(data.language);
+        }
+      } catch (err) {
+        console.warn("Could not load user's preferences from Firestore", err);
+      }
+    };
+    loadPreferences();
+  }, [user, setUnits, setMapStyle, setMapAesthetic, setLanguage]);
+
+  // Listen to recent location searches for dynamically logged-in user
+  useEffect(() => {
+    if (!user) {
+      setRecentSearches([]);
+      return;
+    }
+    const q = query(
+      collection(db, 'users', user.uid, 'recentSearches'),
+      orderBy('timestamp', 'desc'),
+      limit(5)
+    );
+    const unsub = onSnapshot(q, (snapshot) => {
+      const rs: any[] = [];
+      snapshot.forEach(doc => rs.push({ id: doc.id, ...doc.data() }));
+      setRecentSearches(rs);
+    }, (err) => {
+      console.warn("Could not load recent searches", err);
+    });
+    return () => unsub();
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) {
+      setSavedPlaces([]);
+      return;
+    }
+    const q = query(collection(db, 'users', user.uid, 'savedPlaces'), orderBy('savedAt', 'desc'));
+    const unsub = onSnapshot(q, (snapshot) => {
+      const sp: any[] = [];
+      snapshot.forEach(doc => sp.push({ id: doc.id, ...doc.data() }));
+      setSavedPlaces(sp);
+    });
+    return () => unsub();
+  }, [user]);
+
+  // Synchronize travel snapshots count for Developer Insights report
+  useEffect(() => {
+    if (!user) {
+      setDiaryCount(0);
+      return;
+    }
+    const q = query(collection(db, 'travelSnapshots'), orderBy('createdAt', 'desc'));
+    const unsub = onSnapshot(q, (snapshot) => {
+      let count = 0;
+      snapshot.forEach((doc) => {
+        if (doc.data().userId === user.uid) {
+          count++;
+        }
+      });
+      setDiaryCount(count);
+    }, (err) => {
+      console.warn("Could not load snapshots count", err);
+    });
+    return () => unsub();
+  }, [user]);
+
+  // Synchronize Trip Planner Itinerary with Firestore (Cloud Sync)
+  const itinerary = useVantiStore((state) => state.itinerary);
+  const setItinerary = useVantiStore((state) => state.setItinerary);
+
+  useEffect(() => {
+    if (!user) return;
+    const docRef = doc(db, 'users', user.uid, 'planner', 'active');
+    
+    // Remote -> Local sync (Subscribe to Cloud Changes)
+    const unsub = onSnapshot(docRef, (snapshot) => {
+      if (snapshot.exists()) {
+        const data = snapshot.data();
+        // Prevent infinite sync loops by comparing stringified snapshots
+        if (data.stops && JSON.stringify(data.stops) !== JSON.stringify(useVantiStore.getState().itinerary)) {
+          setItinerary(data.stops);
+        }
+      }
+    }, (err) => {
+      console.warn("Could not sync planner from cloud", err);
+    });
+
+    return () => unsub();
+  }, [user, setItinerary]);
+
+  useEffect(() => {
+    if (!user) return;
+    
+    const pushItinerary = async () => {
+      const docRef = doc(db, 'users', user.uid, 'planner', 'active');
+      try {
+        await setDoc(docRef, {
+          stops: itinerary,
+          updatedAt: Date.now()
+        }, { merge: true });
+      } catch (err) {
+        console.error("Failed to sync itinerary to cloud", err);
+      }
+    };
+
+    const timeoutId = setTimeout(pushItinerary, 3000); // Debounced cloud push
+    return () => clearTimeout(timeoutId);
+  }, [user, itinerary]);
+
+  // Request browser location
+  useEffect(() => {
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const loc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+          setUserLocation(loc);
+        },
+        (err) => console.log("Geolocation permission denied, using default center.")
+      );
+    }
+  }, []);
+
+  // Automated Geofencing Welcome Banner Evaluator
+  useEffect(() => {
+    if (userLocation) {
+      const { lat, lng } = userLocation;
+      const isSeoul = lat > 36.5 && lat < 38.5 && lng > 126.0 && lng < 128.0;
+      const isCanada = lat > 40.0 && lat < 60.0 && lng > -140.0 && lng < -50.0;
+
+      if (isSeoul) {
+        setGeofenceWelcome('Seoul');
+        setShowWelcomeBanner(true);
+      } else if (isCanada) {
+        setGeofenceWelcome('Canada');
+        setShowWelcomeBanner(true);
+      } else {
+        setGeofenceWelcome(null);
+        setShowWelcomeBanner(false);
+      }
+    }
+  }, [userLocation]);
+
+  // Filter local mock points based on activeMode and category
+  const [activeCollection, setActiveCollection] = useState<string | null>(null);
+
+  const filteredMockPlaces = useMemo(() => {
+    // Priority 1: Collection Filter
+    if (activeCollection) {
+      if (activeCollection === 'canada_working_holiday') {
+        return CANADA_MOCK_PLACES;
+      }
+      // Mock filtering for other collections
+      return SEOUL_MOCK_PLACES.filter(p => 
+        (activeCollection === 'night_vision' && (p.types?.includes('night') || p.mode === 'perks')) ||
+        (activeCollection === 'dua_lipa_seoul' && (p.rating > 4.2 || p.matchScore > 90))
+      );
+    }
+
+    // Priority 2: Mode + Category Filter
+    return SEOUL_MOCK_PLACES.filter(p => {
+      const matchesMode = activeMode === 'all' || p.mode === activeMode;
+      const matchesCategory = selectedCategory === 'All' || (p.types && p.types.some(t => t.toLowerCase() === selectedCategory.toLowerCase()));
+      return matchesMode && matchesCategory;
+    });
+  }, [activeMode, selectedCategory, activeCollection]);
+
+  const filteredPlaces = useMemo(() => {
+    let list = places.filter(place => matchesCategoryFilter(place.types, selectedCategory));
+
+    if (searchFilter === 'nearby') {
+      const origin = userLocation || DEFAULT_CENTER;
+      list = list.filter(place => {
+        const pLoc = place.location as any;
+        const lat = typeof pLoc?.lat === 'function' ? pLoc.lat() : (pLoc?.lat || 0);
+        const lng = typeof pLoc?.lng === 'function' ? pLoc.lng() : (pLoc?.lng || 0);
+        if (!lat || !lng) return false;
+        
+        // Haversine distance
+        const dLat = ((Number(lat) - origin.lat) * Math.PI) / 180;
+        const dLng = ((Number(lng) - origin.lng) * Math.PI) / 180;
+        const a =
+          Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+          Math.cos((origin.lat * Math.PI) / 180) *
+            Math.cos((Number(lat) * Math.PI) / 180) *
+            Math.sin(dLng / 2) *
+            Math.sin(dLng / 2);
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        const dist = 6371000 * c;
+        return dist < 3000; // 3km threshold
+      });
+    } else if (searchFilter === 'high_rated') {
+      list = list.filter(place => (place.rating || 0) >= 4.5);
+    } else if (searchFilter === 'open_now') {
+      list = list.filter(place => {
+        if (!place.regularOpeningHours) return true;
+        const roh = place.regularOpeningHours as any;
+        if (typeof roh.isOpen === 'function') {
+          return roh.isOpen();
+        }
+        return true;
+      });
+    }
+
+    return list;
+  }, [places, selectedCategory, searchFilter, userLocation]);
+
+  // Fetch Suggestions
+  const handleInputChange = async (value: string) => {
+    setQueryText(value);
+    if (!placesLib) return;
+
+    if (!value.trim()) {
+      setSuggestions([]);
+      setShowSuggestions(false);
+      return;
+    }
+
+    if (!sessionToken) {
+      setSessionToken(new placesLib.AutocompleteSessionToken());
+    }
+
+    setIsLoadingSuggestions(true);
+    setShowSuggestions(true);
+
+    try {
+      const { suggestions: resultSuggestions } = await placesLib.AutocompleteSuggestion.fetchAutocompleteSuggestions({
+        input: value,
+        sessionToken: sessionToken || undefined,
+        locationBias: map?.getCenter() || userLocation || DEFAULT_CENTER,
+      });
+      setSuggestions(resultSuggestions);
+    } catch (err) {
+      console.error("Autocomplete failed:", err);
+    } finally {
+      setIsLoadingSuggestions(false);
+    }
+  };
+
+  const handleSuggestionSelect = async (suggestion: google.maps.places.AutocompleteSuggestion) => {
+    if (!suggestion.placePrediction) return;
+    
+    triggerHaptic('switch');
+    setQueryText(suggestion.placePrediction.text.text);
+    setSuggestions([]);
+    setShowSuggestions(false);
+    setIsSearching(true);
+
+    saveSearchQuery(suggestion.placePrediction.text.text);
+
+    try {
+      const place = suggestion.placePrediction.toPlace();
+      await place.fetchFields({
+        fields: ['id', 'displayName', 'location', 'formattedAddress', 'photos', 'rating', 'userRatingCount', 'types', 'regularOpeningHours']
+      });
+      
+      // Reset session after a selection
+      setSessionToken(new (placesLib as any).AutocompleteSessionToken());
+      
+      handlePlaceClick(place);
+    } catch (err) {
+      console.error("Failed to load place details:", err);
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+
+
+  const handlePoiClick = async (event: any) => {
+    if (!event) return;
+    if (typeof event.stop === 'function') {
+      event.stop();
+    } else if (event.domEvent && typeof event.domEvent.preventDefault === 'function') {
+      event.domEvent.preventDefault();
+    }
+    
+    const placeId = event.detail?.placeId || event.placeId;
+    if (!placeId || !placesLib) return;
+
+    triggerHaptic('switch');
+    setIsSearching(true);
+    
+    try {
+      const place = new placesLib.Place({ id: placeId });
+      await place.fetchFields({
+        fields: ['id', 'displayName', 'location', 'formattedAddress', 'photos', 'rating', 'userRatingCount', 'types', 'regularOpeningHours']
+      });
+      handlePlaceClick(place);
+    } catch (err) {
+      console.error("Failed to load POI details:", err);
+    } finally {
+      setIsSearching(false);
+    }
+  };
+  
+  handlePoiClickRef.current = handlePoiClick;
+  handleQuickSaveBookmarkRef.current = handleQuickSaveBookmark;
+
+  const clearSearch = () => {
+    triggerHaptic('close');
+    setQueryText('');
+    setPlaces([]);
+    setSelectedPlace(null);
+    setShowList(false);
+    setShowingSaved(false);
+  };
+
+  const handleShowRoute = (place: any) => {
+    triggerHaptic('switch');
+    if (!map) return;
+    
+    const lat = typeof place.location?.lat === 'function' ? place.location.lat() : (place.location?.lat || place.lat);
+    const lng = typeof place.location?.lng === 'function' ? place.location.lng() : (place.location?.lng || place.lng);
+    
+    if (!lat || !lng) return;
+
+    if (userLocation) {
+      const bounds = new google.maps.LatLngBounds();
+      bounds.extend(userLocation);
+      bounds.extend({ lat, lng });
+      map.fitBounds(bounds, 100);
+    } else {
+      map.moveCamera({
+        center: { lat, lng },
+        zoom: 17,
+        tilt: (map.getMapTypeId() === 'satellite' || map.getMapTypeId() === 'hybrid') ? 0 : 45
+      });
+    }
+  };
+
+  const filterDispatch = useCallback(
+    (mode: VantiMode, category: string, collection: string | null = null, extraAction?: () => void) => {
+      triggerHaptic('switch');
+      setActiveMode(mode);
+      setSelectedCategory(category);
+      setActiveCollection(collection);
+      setSelectedPlace(null);
+      if (extraAction) extraAction();
+    },
+    [setActiveMode, setSelectedCategory, setActiveCollection, setSelectedPlace, triggerHaptic]
+  );
+
+  const handlePlaceClick = useCallback((place: any) => {
+    // [ZERO-BUG CAMERA LOCK]: Prevent jumping to origin or forced centering
+    triggerHaptic('tap');
+    setSelectedPlace(place);
+    setShowList(true);
+    
+    // Extract coordinates robustly from various Place object formats
+    const lat = typeof place.location?.lat === 'function' ? place.location.lat() : (place.location?.lat || place.lat);
+    const lng = typeof place.location?.lng === 'function' ? place.location.lng() : (place.location?.lng || place.lng);
+    
+    if (!lat || !lng) return;
+    const targetLoc = { lat, lng };
+
+    if (map && geometryLib) {
+      const currentCenter = map.getCenter();
+      if (currentCenter) {
+        const dist = google.maps.geometry.spherical.computeDistanceBetween(currentCenter, targetLoc);
+        const bounds = map.getBounds();
+        const isInView = bounds?.contains(targetLoc);
+
+        // [ZERO-BUG CAMERA LOCK]: Only move camera if point is out of view or too far for context
+        if (!isInView || dist > 800) {
+          if (is3DActive && map3dRef.current) {
+            // Photorealistic 3D Cinematic Fly-to with isometric projection params
+            const isHighRated = (place.rating > 4.5) || (place.matchScore && place.matchScore > 95);
+            const m3d = map3dRef.current as any;
+            m3d.flyCameraTo({
+              endCamera: {
+                center: { lat: targetLoc.lat, lng: targetLoc.lng, altitude: isHighRated ? 150 : 0 },
+                tilt: isHighRated ? 75 : 65,
+                range: isHighRated ? 400 : 650,
+                heading: (mapHeading || 0) + (isHighRated ? 90 : 45)
+              },
+              durationMillis: isHighRated ? 3500 : 2200
+            });
+          } else {
+            // Smooth Vector Map Camera Movement with cinematic fly-to effect
+            animateFlyTo(map, targetLoc, 18.8, 67.5, 35, 1400);
+          }
+        }
+      }
+    }
+    
+    // Sync state for UI context
+    setMapCenter(targetLoc);
+  }, [map, geometryLib, is3DActive, setSelectedPlace, setShowList, mapHeading]);
+
+  // Handle Search using Google Places API
+  const handleSearch = async (text?: string) => {
+    const searchText = text || queryText;
+    if (!placesLib || !searchText.trim()) return;
+    
+    setIsSearching(true);
+    setShowingSaved(false);
+    setSelectedPlace(null);
+    try {
+      const { places: resultPlaces } = await placesLib.Place.searchByText({
+        textQuery: searchText,
+        fields: ['id', 'displayName', 'location', 'formattedAddress', 'rating', 'userRatingCount', 'types', 'photos', 'regularOpeningHours'],
+        locationBias: map?.getCenter() || userLocation || DEFAULT_CENTER,
+        maxResultCount: 15,
+      });
+      
+      setPlaces(resultPlaces);
+      
+      // Save search query to history
+      saveSearchQuery(searchText);
+      
+      if (resultPlaces.length > 0) {
+        // Automatically navigate to the first relevant result for instant feedback
+        handlePlaceClick(resultPlaces[0]);
+        setShowList(true);
+      }
+    } catch (err) {
+      console.error("Search failed:", err);
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  const handleDownloadArea = async () => {
+    if (!map) return;
+    triggerHaptic('tap');
+    setIsDownloading(true);
+    setDownloadSuccess(false);
+    setDownloadProgress(0);
+    setDownloadStage('Initializing boundary cache...');
+    
+    try {
+      const bounds = map.getBounds();
+      if (!bounds) throw new Error('Bounds not loaded');
+      
+      const ne = bounds.getNorthEast();
+      const sw = bounds.getSouthWest();
+
+      const stages = [
+        { progress: 15, msg: 'Fencing coordinate nodes...' },
+        { progress: 35, msg: 'Rasterizing viewport matrix grids...' },
+        { progress: 60, msg: 'Indexing POI place metadata cache...' },
+        { progress: 85, msg: 'Re-routing ambient traffic overlay maps...' },
+        { progress: 95, msg: 'Writing payload to IndexedDB database store...' }
+      ];
+
+      for (const step of stages) {
+        await new Promise(resolve => setTimeout(resolve, 350));
+        setDownloadProgress(step.progress);
+        setDownloadStage(step.msg);
+      }
+      
+      await saveOfflineArea({
+        id: `area-${Date.now()}`,
+        bounds: {
+          north: ne.lat(),
+          east: ne.lng(),
+          south: sw.lat(),
+          west: sw.lng()
+        },
+        name: `Downloaded Area - ${new Date().toLocaleDateString()}`,
+        savedAt: Date.now(),
+        places: places // Cache current visible POIs/results
+      });
+      
+      setDownloadProgress(100);
+      setDownloadStage('Offline synchronization complete.');
+      setDownloadSuccess(true);
+      triggerHaptic('save');
+      setTimeout(() => setDownloadSuccess(false), 3000);
+    } catch (e) {
+      console.error("Failed to save area:", e);
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
+  const triggerFlyoverSimulation = async () => {
+    setGeneratingVideo(true);
+    setGeneratedVideoUrl(null);
+    try {
+      const currentCenter = map?.getCenter()?.toJSON() || DEFAULT_CENTER;
+      const prompt = `A cinematic high altitude drone flyover of latitude ${currentCenter.lat} longitude ${currentCenter.lng} with glowing magenta grid elements, VANTi tech theme, hyperlapse, majestic lighting`;
+      
+      const videoReq = await fetch('/api/generate-video', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt })
+      });
+      const { operationName } = await videoReq.json();
+      
+      if (!operationName) {
+         setGeneratingVideo(false);
+         alert("Could not start flyover generation.");
+         return;
+      }
+
+      // Track generation
+      const interval = setInterval(async () => {
+        try {
+          const statusReq = await fetch('/api/video-status', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ operationName })
+          });
+          const { done } = await statusReq.json();
+          if (done) {
+            clearInterval(interval);
+            setGeneratedVideoUrl(`/api/video-download?op=${encodeURIComponent(operationName)}`);
+            setGeneratingVideo(false);
+          }
+        } catch (err) {
+          console.error("Polling video failed:", err);
+        }
+      }, 8000);
+    } catch (e) {
+      console.error(e);
+      setGeneratingVideo(false);
+    }
+  };
+
+  const [isRecentering, setIsRecentering] = useState(false);
+
+  const triggerRecenter = () => {
+    if (map && userLocation) {
+      setIsRecentering(true);
+      // Modern smooth camera movement
+      map.moveCamera({
+        center: userLocation,
+        zoom: 16,
+        tilt: is3DActive ? 67.5 : 0,
+        // Heading is maintained unless you want to reset it
+      });
+      setTimeout(() => setIsRecentering(false), 600);
+    }
+  };
+
+  // Get active color system for mode transitions
+  const getModeStyles = (mode: VantiMode) => {
+    switch(mode) {
+      case 'social':
+        return {
+          accent: 'text-rose-500',
+          bgAccent: 'bg-rose-500',
+          gradient: 'from-rose-500 to-pink-600',
+          glow: 'shadow-[0_0_15px_rgba(244,63,94,0.4)]',
+          border: 'border-rose-500/30'
+        };
+      case 'genius':
+        return {
+          accent: 'text-amber-500',
+          bgAccent: 'bg-amber-500',
+          gradient: 'from-amber-400 to-amber-600',
+          glow: 'shadow-[0_0_15px_rgba(245,158,11,0.4)]',
+          border: 'border-amber-500/30'
+        };
+      case 'perks':
+        return {
+          accent: 'text-emerald-500',
+          bgAccent: 'bg-emerald-500',
+          gradient: 'from-emerald-400 to-teal-600',
+          glow: 'shadow-[0_0_15px_rgba(16,185,129,0.4)]',
+          border: 'border-emerald-500/30'
+        };
+      case 'profile':
+        return {
+          accent: 'text-violet-500',
+          bgAccent: 'bg-violet-500',
+          gradient: 'from-violet-500 to-indigo-600',
+          glow: 'shadow-[0_0_15px_rgba(139,92,246,0.4)]',
+          border: 'border-violet-500/30'
+        };
+
+      default:
+        return {
+          accent: 'text-blue-500',
+          bgAccent: 'bg-blue-500',
+          gradient: 'from-blue-500 to-cyan-600',
+          glow: 'shadow-[0_0_15px_rgba(59,130,246,0.4)]',
+          border: 'border-blue-500/30'
+        };
+    }
+  };
+
+  const modeStyles = getModeStyles(activeMode);
+  const dynamicScale = Math.max(0.7, Math.min(1.4, 1 + (mapZoom - 14) * 0.15));
+
+  const getMarkerStyles = (theme: 'minimalist' | 'glow' | 'classic', isSelected: boolean, mode?: string) => {
+    switch (theme) {
+        case 'minimalist':
+            return cn(
+                "relative w-10 h-10 rounded-full flex items-center justify-center transition-all duration-300 shadow-xl border border-white/20 bg-slate-900/80 backdrop-blur-sm",
+                isSelected ? "border-white/80" : "hover:border-white/40"
+            );
+        case 'glow':
+            return cn(
+                "relative w-10 h-10 rounded-full flex items-center justify-center transition-all duration-300 shadow-[0_0_15px_rgba(244,63,94,0.6)] border border-rose-500/50 bg-slate-950",
+                isSelected ? "border-rose-400" : "hover:shadow-[0_0_20px_rgba(244,63,94,0.8)]"
+            );
+        case 'classic': default:
+            return cn(
+                "relative w-10 h-10 rounded-full flex items-center justify-center transition-all duration-300 border-2 border-white bg-rose-500 shadow-lg",
+                isSelected ? "shadow-xl border-rose-200" : "hover:shadow-xl"
+            );
+    }
+  };
+
+  useEffect(() => {
+    if (isFlightMode && map) {
+      const interval = setInterval(() => {
+        setMapHeading(prev => (prev + 0.1) % 360);
+      }, 50);
+      return () => clearInterval(interval);
+    }
+  }, [isFlightMode, map]);
+
+  // Maintain a MarkerClusterer ref to prevent memory leaks and duplicated nodes
+  const markerClustererRef = useRef<MarkerClusterer | null>(null);
+
+  useEffect(() => {
+    if (!map) return;
+
+    // Safely instantiate MarkerClusterer if not already existing
+    if (!markerClustererRef.current) {
+      try {
+        markerClustererRef.current = new MarkerClusterer({
+          map,
+          markers: [],
+        });
+      } catch (err) {
+        console.warn('MarkerClusterer initialization shield:', err);
+      }
+    }
+
+    // Explicit cleanup before re-clustering on state changes
+    return () => {
+      if (markerClustererRef.current) {
+        try {
+          markerClustererRef.current.clearMarkers();
+        } catch (err) {
+          console.warn('MarkerClusterer explicit cleanup of nodes:', err);
+        }
+      }
+    };
+  }, [map, mapZoom, mapCenter, mapBounds, isPowerEfficiencyEnabled]);
+
+  // Marker Clustering System for viewport clarity when zoomed out
+  const clusteredMockPlaces = useMemo(() => {
+    return processSpatialGrid(
+      filteredMockPlaces,
+      mapZoom,
+      mapCenter,
+      mapBounds,
+      isPowerEfficiencyEnabled
+    );
+  }, [filteredMockPlaces, mapZoom, mapCenter, mapBounds, isPowerEfficiencyEnabled]);
+
+  // Normalize search places for spatial calculations
+  const normalizedSearchPlaces = useMemo(() => {
+    return filteredPlaces.map(place => {
+      const pLoc = place.location as any;
+      const lat = typeof pLoc?.lat === 'function' ? pLoc.lat() : (pLoc?.lat || 0);
+      const lng = typeof pLoc?.lng === 'function' ? pLoc.lng() : (pLoc?.lng || 0);
+      return {
+        ...place,
+        id: place.id,
+        lat: Number(lat),
+        lng: Number(lng)
+      };
+    }).filter(p => p.lat !== 0 && p.lng !== 0);
+  }, [filteredPlaces]);
+
+  // High performance spatial grid clustering for search places
+  const clusteredSearchPlaces = useMemo(() => {
+    return processSpatialGrid(
+      normalizedSearchPlaces,
+      mapZoom,
+      mapCenter,
+      mapBounds,
+      isPowerEfficiencyEnabled
+    );
+  }, [normalizedSearchPlaces, mapZoom, mapCenter, mapBounds, isPowerEfficiencyEnabled]);
+
+  // Viewport-bounds clipping for active friends list to improve visual density & DOM performance
+  const visibleFriends = useMemo(() => {
+    return MOCK_FRIENDS.filter(friend => {
+      let minLat = -90, maxLat = 90, minLng = -180, maxLng = 180;
+      const hasValidBounds = mapBounds && typeof mapBounds.contains === 'function';
+      if (!hasValidBounds) {
+        const latSpan = 180 / Math.pow(2, Math.max(1, mapZoom - 2));
+        const lngSpan = 360 / Math.pow(2, Math.max(1, mapZoom - 2));
+        minLat = mapCenter.lat - latSpan;
+        maxLat = mapCenter.lat + latSpan;
+        minLng = mapCenter.lng - lngSpan;
+        maxLng = mapCenter.lng + lngSpan;
+      } else {
+        try {
+          return mapBounds.contains({ lat: friend.lat, lng: friend.lng });
+        } catch (e) {}
+      }
+      return friend.lat >= minLat && friend.lat <= maxLat && friend.lng >= minLng && friend.lng <= maxLng;
+    });
+  }, [mapBounds, mapZoom, mapCenter]);
+
+  // Viewport-bounds clipping for agent markers
+  const visibleAgentMarkers = useMemo(() => {
+    return agentMarkers.filter(m => {
+      let minLat = -90, maxLat = 90, minLng = -180, maxLng = 180;
+      const hasValidBounds = mapBounds && typeof mapBounds.contains === 'function';
+      if (!hasValidBounds) {
+        const latSpan = 180 / Math.pow(2, Math.max(1, mapZoom - 2));
+        const lngSpan = 360 / Math.pow(2, Math.max(1, mapZoom - 2));
+        minLat = mapCenter.lat - latSpan;
+        maxLat = mapCenter.lat + latSpan;
+        minLng = mapCenter.lng - lngSpan;
+        maxLng = mapCenter.lng + lngSpan;
+      } else {
+        try {
+          return mapBounds.contains({ lat: m.lat, lng: m.lng });
+        } catch (e) {}
+      }
+      return m.lat >= minLat && m.lat <= maxLat && m.lng >= minLng && m.lng <= maxLng;
+    });
+  }, [agentMarkers, mapBounds, mapZoom, mapCenter]);
+
+  const handleCameraChange = useCallback((e: any) => {
+    const newCenter = e.detail.center;
+    setMapCenter(prev => {
+      if (Math.abs(prev.lat - newCenter.lat) < 1e-7 && Math.abs(prev.lng - newCenter.lng) < 1e-7) return prev;
+      return newCenter;
+    });
+    setMapZoom(prev => Math.abs(prev - e.detail.zoom) < 0.001 ? prev : e.detail.zoom);
+    setMapTilt(prev => prev === e.detail.tilt ? prev : e.detail.tilt);
+    setMapHeading(prev => prev === e.detail.heading ? prev : e.detail.heading);
+    handleZoomChangeHaptic(e.detail.zoom);
+    if (map) {
+      try {
+        const newBounds = map.getBounds() || null;
+        setMapBounds(prev => (prev && newBounds && prev.equals(newBounds)) ? prev : newBounds);
+      } catch (err) {
+        console.warn(err);
+      }
+    }
+  }, [map, handleZoomChangeHaptic]);
+
+  return (
+    <div className="relative w-full h-screen bg-[#0a0c10] overflow-hidden select-none text-slate-100 font-sans">
+      
+      <motion.div
+        animate={
+          isTransitioningStyle 
+            ? { scale: 0.98, filter: 'blur(3px)', opacity: 0.5 }
+            : isTransitioning3D || isRecentering 
+            ? { scale: 1.05, filter: isRecentering ? 'blur(1px)' : 'blur(3px)', opacity: 0.8 } 
+            : { scale: 1, filter: 'blur(0px)', opacity: 1 }
+        }
+        transition={{ duration: 0.4, ease: "easeInOut" }}
+        className="absolute inset-0 w-full h-full"
+      >
+      <div 
+        className="absolute inset-0 w-full h-full transition-all duration-700 ease-in-out"
+        style={{ filter: getAestheticFilter(mapAesthetic) }}
+      >
+      {is3DActive ? (
+        <MapErrorBoundary>
+          <Map3D
+            ref={map3dRef}
+          defaultCenter={{ ...mapCenter, altitude: 0 }}
+          defaultHeading={mapHeading}
+          defaultTilt={mapTilt}
+          defaultRange={Math.pow(2, 21 - mapZoom) * 150} 
+          mode={MapMode.SATELLITE}
+          gestureHandling={GestureHandling.GREEDY}
+          maxTilt={90}
+          minTilt={0}
+          onCameraChanged={handleMap3DCameraChange}
+          className="absolute inset-0 w-full h-full"
+          {...{
+            // Injecting specific 3D terrain and shadow simulation properties
+            lightingMode: 'DYNAMIC',
+            daylightSimulation: true
+          } as any}
+        >
+          {/* Immersive 3D Terrain & Dynamic Shadows (Mocked via Lighting Simulation) */}
+          <div className="hidden" data-shadow-intensity="dynamic" data-local-time={new Date().toLocaleTimeString()} />
+          
+          {filteredMockPlaces.map(p => (
+            <Marker3D 
+              key={`3d-mock-${p.id}`} 
+              position={{ lat: p.lat, lng: p.lng, altitude: 0 }} 
+              label={`${p.displayName} (${p.matchScore}% Match)`} 
+              onClick={() => handlePlaceClick(p)}
+            />
+          ))}
+          {agentMarkers.map((p, idx) => (
+            <Marker3D 
+              key={`3d-agent-${idx}`} 
+              position={{ lat: p.lat, lng: p.lng, altitude: 0 }} 
+              label={p.name} 
+              onClick={() => handlePlaceClick({
+                 id: `agent-${idx}`,
+                 displayName: p.name,
+                 formattedAddress: p.description,
+                 lat: p.lat,
+                 lng: p.lng,
+                 types: [p.type || 'point_of_interest']
+              })}
+            />
+          ))}
+          {userLocation && (
+            <Marker3D 
+              position={{ ...userLocation, altitude: 20 }} 
+              label="YOU" 
+            />
+          )}
+        </Map3D>
+       </MapErrorBoundary>
+      ) : (
+        <MapErrorBoundary>
+          <Map
+            defaultCenter={mapCenter}
+          defaultZoom={mapZoom}
+          defaultTilt={(['satellite', 'hybrid'].includes(mapType)) ? 0 : mapTilt}
+          defaultHeading={mapHeading}
+          mapId={MAP_ID}
+          renderingType="VECTOR"
+          colorScheme={['Night', 'Simulation', 'Genie', 'Cosmic', 'Neo-Tokyo', 'Midnight'].includes(mapTheme) ? "DARK" : "LIGHT"}
+          mapTypeId={isTerrainActive ? 'terrain' : mapType}
+          disableDefaultUI={true}
+          gestureHandling="greedy"
+          tiltInteractionEnabled={!perspectiveLock}
+          headingInteractionEnabled={!perspectiveLock}
+          onCameraChanged={handleCameraChange}
+          {...({ onPoiClick: handlePoiClick } as any)}
+          options={{
+            isFractionalZoomEnabled: true,
+            scaleControl: false,
+            disableDefaultUI: true,
+            gestureHandling: 'greedy',
+            clickableIcons: true,
+            scrollwheel: true,
+            restriction: null,
+            maxZoom: 22,
+            minZoom: 2,
+            tiltInteractionEnabled: true,
+            headingInteractionEnabled: true,
+            maxTilt: 85,
+            minTilt: 0,
+            rotateControl: true,
+            tiltControl: true,
+            keyboardShortcuts: true
+          }}
+          internalUsageAttributionIds={['gmp_mcp_codeassist_v1_aistudio']}
+          className="absolute inset-0 w-full h-full"
+        >
+          <WeatherMapLayer />
+          {/* Live Traffic Flow Layer using D3.js */}
+          {showTrafficLayer && <D3TrafficLayer mapTheme={mapTheme} activeMode={activeMode} isPowerEfficiencyEnabled={isPowerEfficiencyEnabled} />}
+
+          {/* Render Live Curation Mock Places with Clustering - Only when map and marker library are ready */}
+       {showPinsLayer && isMapIdle && map && markerLib && clusteredMockPlaces.map((p, idx) => {
+         const clusterId = `mock-cluster-${p.lat?.toFixed(5)}-${p.lng?.toFixed(5)}`;
+         const isClusterExpanded = expandedClusterId === clusterId || hoveredClusterId === clusterId;
+
+         return (
+          <SafeAdvancedMarker 
+            key={p.isCluster ? `cluster-mock-${p.id}-${idx}-${p.lat}` : `node-v4-${p.id}-${activeMode}-${selectedCategory}-${activeCollection}-${p.lat}`} 
+            position={{ lat: p.lat, lng: p.lng }}
+            title={p.isCluster ? `${p.clusterCount} Spots` : p.displayName}
+            onClick={() => {
+              if (p.isCluster) {
+                setExpandedClusterId(expandedClusterId === clusterId ? null : clusterId);
+                triggerHaptic('tap');
+              } else {
+                handlePlaceClick(p);
+              }
+            }}
+            className="group cursor-pointer"
+          >
+            <motion.div 
+              variants={markerVariants}
+              initial="hidden"
+              animate="visible"
+              custom={{ idx, scale: dynamicScale }}
+              className="relative flex flex-col items-center"
+              onMouseEnter={() => {
+                if (p.isCluster) {
+                  setHoveredClusterId(clusterId);
+                }
+              }}
+              onMouseLeave={() => {
+                if (p.isCluster) {
+                  setHoveredClusterId(null);
+                }
+              }}
+            >
+              {p.isCluster ? (
+                <div className="relative flex items-center justify-center">
+                  {/* Main Cluster Circle Badge */}
+                  <div className="w-10 h-10 rounded-full bg-rose-600 border-2 border-white shadow-2xl flex items-center justify-center text-white text-[10px] font-black hover:scale-105 transition-all z-20 relative">
+                    {isClusterExpanded ? '✕' : p.clusterCount}
+                  </div>
+
+                  {/* Fanned out Members */}
+                  <AnimatePresence>
+                    {isClusterExpanded && p.members?.map((m: any, j: number) => {
+                      const count = p.members?.length || 1;
+                      const angle = (j / count) * 2 * Math.PI;
+                      const R = 64; // Fan-out radius in pixels
+                      const x = Math.cos(angle) * R;
+                      const y = Math.sin(angle) * R;
+
+                      return (
+                        <motion.div
+                          key={`fan-mock-${m.id || j}`}
+                          initial={{ x: 0, y: 0, scale: 0, opacity: 0 }}
+                          animate={{ x, y, scale: 1, opacity: 1 }}
+                          exit={{ x: 0, y: 0, scale: 0, opacity: 0 }}
+                          transition={{ type: "spring", damping: 15, stiffness: 180, delay: j * 0.03 }}
+                          className="absolute z-10"
+                          style={{ originX: 0.5, originY: 0.5 }}
+                        >
+                          {/* Connecting Line to central cluster */}
+                          <svg className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 overflow-visible pointer-events-none z-0" style={{ width: 0, height: 0 }}>
+                            <line 
+                              x1={0} 
+                              y1={0} 
+                              x2={-x} 
+                              y2={-y} 
+                              stroke="#f43f5e" 
+                              strokeWidth="1.5" 
+                              strokeDasharray="3 3"
+                              className="opacity-75"
+                            />
+                          </svg>
+
+                          {/* Sub-item Buzz Marker */}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              e.preventDefault();
+                              handlePlaceClick(m);
+                              triggerHaptic('open_panel');
+                            }}
+                            className="cursor-pointer shadow-lg relative flex flex-col items-center group/item hover:scale-115 transition-transform"
+                          >
+                            <BuzzMarker 
+                              userRatingCount={m.userRatingCount} 
+                              isSelected={selectedPlace?.id === m.id}
+                              activeWeather={activeWeather}
+                              mode={m.mode}
+                            />
+                            
+                            {/* Hover Tooltip displaying Spot Name */}
+                            <div className="absolute bottom-full mb-1 bg-slate-950/90 border border-slate-800 text-[9px] font-bold text-white px-1.5 py-0.5 rounded shadow-lg whitespace-nowrap pointer-events-none opacity-0 group-hover/item:opacity-100 transition-opacity z-50">
+                              {m.displayName}
+                            </div>
+                          </button>
+                        </motion.div>
+                      );
+                    })}
+                  </AnimatePresence>
+                </div>
+              ) : (
+                <motion.div 
+                  className="relative cursor-pointer"
+                  initial={{ scale: 0, opacity: 0, y: 20 }}
+                  animate={p.matchScore && p.matchScore > 90 ? { 
+                    scale: [1, 1.05, 1],
+                    opacity: 1,
+                    y: 0
+                  } : { scale: 1, opacity: 1, y: 0 }}
+                  whileHover={{ scale: 1.15, y: -5 }}
+                  transition={{ 
+                    type: "spring",
+                    stiffness: 300,
+                    damping: 15,
+                    duration: p.matchScore && p.matchScore > 90 ? 1.5 : undefined,
+                    repeat: p.matchScore && p.matchScore > 90 ? Infinity : undefined,
+                    ease: p.matchScore && p.matchScore > 90 ? "easeInOut" : undefined 
+                  }}
+                >
+                  <BuzzMarker 
+                    userRatingCount={p.userRatingCount} 
+                    isSelected={selectedPlace?.id === p.id}
+                    activeWeather={activeWeather}
+                    mode={p.mode}
+                  />
+                </motion.div>
+              )}
+              {selectedPlace?.id === p.id && (
+                  <InfoBubble 
+                      crowdDensity={Math.floor(Math.random() * 100)} 
+                      noiseLevel={Math.floor(Math.random() * 100)} 
+                      mode={p.mode || 'default'}
+                      onExpand={() => handlePlaceClick(p)}
+                      crowdTrend={Math.random() > 0.5 ? 'up' : 'down'}
+                      noiseTrend={Math.random() > 0.5 ? 'stable' : 'up'}
+                  />
+              )}
+
+              {/* Match Curation Box for Genius Mode */}
+              {!p.isCluster && p.mode === 'genius' && (
+                <div className="absolute top-11 bg-amber-500/20 backdrop-blur-md border border-amber-500/40 text-amber-300 font-mono text-[9px] px-1.5 py-0.5 rounded-md uppercase tracking-wider font-extrabold shadow-md transform pointer-events-none">
+                  98% Match
+                </div>
+              )}
+
+              {/* Vouchers Badge for Perks Mode */}
+              {!p.isCluster && p.mode === 'perks' && (
+                <div className="absolute top-11 bg-emerald-500/20 backdrop-blur-md border border-emerald-500/40 text-emerald-300 font-mono text-[9px] px-1.5 py-0.5 rounded-md uppercase tracking-wider font-extrabold shadow-md transform pointer-events-none flex items-center gap-0.5">
+                  <Ticket className="w-2.5 h-2.5" /> BOGO
+                </div>
+              )}
+            </motion.div>
+          </SafeAdvancedMarker>
+        )})}
+
+        {/* Floating Active Friends' Avatars list in Social Mode */}
+        {showPinsLayer && isMapIdle && map && markerLib && activeMode === 'social' && visibleFriends.map((f, idx) => (
+          <SafeAdvancedMarker 
+            key={`friend-v2-${f.id}-${f.lat}`} 
+            position={{ lat: f.lat, lng: f.lng }}
+            title={f.name}
+            onClick={() => {
+              setSelectedPlace({
+                id: f.id,
+                displayName: f.name,
+                formattedAddress: `Active near ${f.activeLocation}`,
+                lat: f.lat,
+                lng: f.lng,
+                types: ['friend_marker'],
+                imageUrl: f.avatar,
+                socialActivity: `Status: Checked-in at ${f.activeLocation} (${f.lastActive})`,
+                mode: 'social'
+              });
+              setShowList(true);
+            }}
+          >
+            <motion.div 
+              variants={markerVariants}
+              initial="hidden"
+              animate="visible"
+              custom={{ idx: idx + 5, scale: dynamicScale }}
+              className="flex flex-col items-center cursor-pointer group"
+            >
+              <div className={cn(
+                "relative w-10 h-10 rounded-full border-2 border-rose-500 p-0.5 shadow-xl bg-slate-950 transition-transform overflow-hidden",
+                selectedPlace?.id === f.id ? "animate-pulse scale-110" : "scale-100 group-hover:scale-110"
+              )}>
+                <img src={f.avatar} alt={f.name} className="w-full h-full rounded-full object-cover" />
+                <WeatherOverlay weather={activeWeather} />
+              </div>
+              <div className="mt-1 px-1.5 py-0.5 bg-rose-500 text-white font-display text-[9px] font-bold rounded shadow-lg opacity-90">
+                ● {f.name.split(' ')[0]}
+              </div>
+            </motion.div>
+          </SafeAdvancedMarker>
+        ))}
+
+        {/* Dynamic Calculated Rendezvous Point (GNB 2: Social Core) */}
+        {showPinsLayer && isMapIdle && map && markerLib && activeMode === 'social' && socialMeetpoint && (
+          <SafeAdvancedMarker 
+            key={`meetup-core-${socialMeetpoint.lat}`}
+            position={{ lat: socialMeetpoint.lat, lng: socialMeetpoint.lng }}
+            title={socialMeetpoint.name}
+            onClick={() => {
+              setSelectedPlace({
+                id: 'rendezvous_meetpoint',
+                displayName: socialMeetpoint.name,
+                formattedAddress: 'Optimal meetup centerpoint generated by AI proximity balancing.',
+                lat: socialMeetpoint.lat,
+                lng: socialMeetpoint.lng,
+                types: ['rendezvous_meetpoint'],
+                imageUrl: 'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?auto=format&fit=crop&w=500&q=80',
+                socialActivity: 'Optimized coordinate. Click to details for route maps and host options.',
+                mode: 'social'
+              });
+              setShowList(true);
+            }}
+          >
+            <motion.div 
+              variants={markerVariants}
+              initial="hidden"
+              animate="visible"
+              custom={{ idx: 5, scale: dynamicScale }}
+              className="flex flex-col items-center cursor-pointer relative z-50"
+            >
+              <span className="absolute -top-6 left-1/2 -translate-x-1/2 bg-amber-500 text-slate-950 font-mono text-[8px] font-black px-1.5 py-0.5 rounded shadow-lg uppercase tracking-wider whitespace-nowrap animate-bounce border border-slate-950">
+                ⚡ Optimal Rendezvous
+              </span>
+              <div className="relative w-10 h-10 rounded-xl border-2 border-amber-400 bg-slate-950/95 flex items-center justify-center text-amber-400 shadow-[0_0_25px_rgba(245,158,11,0.8)]">
+                <MapPin className="w-5 h-5 animate-pulse" />
+                <WeatherOverlay weather={activeWeather} />
+              </div>
+              <div className="absolute inset-0 rounded-xl bg-amber-400/20 animate-ping -z-10" />
+            </motion.div>
+          </SafeAdvancedMarker>
+        )}
+
+        {/* Regular Search Places */}
+        {/* Markers from Gemini Agent */}
+        {showPinsLayer && isMapIdle && map && markerLib && visibleAgentMarkers.map((p, idx) => (
+          <SafeAdvancedMarker
+            key={`agent-marker-${p.id || idx}-${p.lat}`}
+            position={{ lat: p.lat, lng: p.lng }}
+            onClick={() => {
+              handlePlaceClick({
+                id: `agent-${idx}`,
+                displayName: p.name,
+                formattedAddress: p.description,
+                lat: p.lat,
+                lng: p.lng,
+                types: [p.type || 'point_of_interest']
+              });
+            }}
+          >
+            <motion.div 
+              variants={markerVariants}
+              initial="hidden"
+              animate="visible"
+              custom={{ idx: idx + 10, scale: dynamicScale }}
+              className="group relative flex flex-col items-center"
+            >
+              <div className="relative w-8 h-8 bg-indigo-500 rounded-full flex items-center justify-center border-2 border-white shadow-xl hover:scale-110 transition-transform">
+                <Sparkles className="w-4 h-4 text-white" />
+                <WeatherOverlay weather={activeWeather} />
+              </div>
+              <div className="shadow-2xl opacity-0 group-hover:opacity-100 transition-opacity absolute bottom-full mb-2 bg-slate-900 border border-slate-700 p-2 rounded-lg pointer-events-none min-w-[120px] z-50">
+                <p className="text-[10px] font-bold text-white leading-tight">{p.name}</p>
+                {p.type && <p className="text-[8px] text-indigo-400 uppercase tracking-tighter mt-0.5">{p.type}</p>}
+              </div>
+            </motion.div>
+          </SafeAdvancedMarker>
+        ))}
+
+        {showPinsLayer && isMapIdle && map && markerLib && clusteredSearchPlaces.map((place: any, idx) => {
+          const searchClusterId = `search-cluster-${place.lat?.toFixed(5)}-${place.lng?.toFixed(5)}`;
+          const isSearchClusterExpanded = expandedClusterId === searchClusterId || hoveredClusterId === searchClusterId;
+
+          const key = place.isCluster 
+            ? `search-cluster-${place.id || idx}-${place.lat}-${place.lng}` 
+            : `search-v3-${place.id}-${selectedCategory}-${place.lat}-${place.lng}`;
+          
+          return (
+            <SafeAdvancedMarker 
+              key={key} 
+              position={{ lat: place.lat, lng: place.lng }} 
+              title={place.isCluster ? `${place.clusterCount} Results` : (place.displayName || 'Location')}
+              onClick={() => {
+                if (place.isCluster) {
+                  setExpandedClusterId(expandedClusterId === searchClusterId ? null : searchClusterId);
+                  triggerHaptic('tap');
+                } else {
+                  handlePlaceClick(place);
+                }
+              }}
+              className="group cursor-pointer"
+            >
+              <motion.div 
+                variants={markerVariants}
+                initial="hidden"
+                animate="visible"
+                custom={{ idx, scale: dynamicScale }}
+                className="relative flex flex-col items-center"
+                onMouseEnter={() => {
+                  if (place.isCluster) {
+                    setHoveredClusterId(searchClusterId);
+                  }
+                }}
+                onMouseLeave={() => {
+                  if (place.isCluster) {
+                    setHoveredClusterId(null);
+                  }
+                }}
+              >
+                {place.isCluster ? (
+                  <div className="relative flex items-center justify-center">
+                    {/* Main Cluster Circle Badge */}
+                    <div className="w-10 h-10 rounded-full bg-indigo-600 border-2 border-white shadow-2xl flex items-center justify-center text-white text-[10px] font-black hover:scale-105 transition-all z-20 relative">
+                      {isSearchClusterExpanded ? '✕' : place.clusterCount}
+                    </div>
+
+                    {/* Fanned out Search Members */}
+                    <AnimatePresence>
+                      {isSearchClusterExpanded && place.members?.map((m: any, j: number) => {
+                        const count = place.members?.length || 1;
+                        const angle = (j / count) * 2 * Math.PI;
+                        const R = 64; // Fan-out radius in pixels
+                        const x = Math.cos(angle) * R;
+                        const y = Math.sin(angle) * R;
+
+                        return (
+                          <motion.div
+                            key={`fan-search-${m.id || j}`}
+                            initial={{ x: 0, y: 0, scale: 0, opacity: 0 }}
+                            animate={{ x, y, scale: 1, opacity: 1 }}
+                            exit={{ x: 0, y: 0, scale: 0, opacity: 0 }}
+                            transition={{ type: "spring", damping: 15, stiffness: 180, delay: j * 0.03 }}
+                            className="absolute z-10"
+                            style={{ originX: 0.5, originY: 0.5 }}
+                          >
+                            {/* Connecting Line to central cluster */}
+                            <svg className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 overflow-visible pointer-events-none z-0" style={{ width: 0, height: 0 }}>
+                              <line 
+                                x1={0} 
+                                y1={0} 
+                                x2={-x} 
+                                y2={-y} 
+                                stroke="#6366f1" 
+                                strokeWidth="1.5" 
+                                strokeDasharray="3 3"
+                                className="opacity-75"
+                              />
+                            </svg>
+
+                            {/* Sub-item Pin Button */}
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                e.preventDefault();
+                                handlePlaceClick(m);
+                                triggerHaptic('open_panel');
+                              }}
+                              className={cn(
+                                "cursor-pointer shadow-lg relative flex flex-col items-center group/item hover:scale-115 transition-transform",
+                                getMarkerStyles(markerTheme, selectedPlace?.id === m.id)
+                              )}
+                            >
+                              <MapPin className={cn("w-4 h-4", selectedPlace?.id === m.id ? "text-white" : "text-indigo-400")} />
+                              
+                              {/* Hover Tooltip displaying Spot Name */}
+                              <div className="absolute bottom-full mb-1 bg-slate-950/90 border border-slate-800 text-[9px] font-bold text-white px-1.5 py-0.5 rounded shadow-lg whitespace-nowrap pointer-events-none opacity-0 group-hover/item:opacity-100 transition-opacity z-50">
+                                {m.displayName || m.name}
+                              </div>
+                            </button>
+                          </motion.div>
+                        );
+                      })}
+                    </AnimatePresence>
+                  </div>
+                ) : (
+                  <div className="relative">
+                    {/* Photo Thumbnail */}
+                    {place.photos && place.photos.length > 0 && (
+                      <img
+                        src={place.photos[0].getURI({ maxWidth: 100 })}
+                        alt={place.displayName || 'Location'}
+                        referrerPolicy="no-referrer"
+                        className="absolute -top-12 left-1/2 -translate-x-1/2 w-10 h-10 rounded-full border-2 border-white object-cover shadow-lg opacity-0 group-hover:opacity-100 transition-opacity"
+                      />
+                    )}
+                    {/* Custom Buzz Marker */}
+                    <motion.div 
+                      className="relative cursor-pointer"
+                      initial={{ scale: 0, opacity: 0, y: 20 }}
+                      animate={selectedPlace?.id === place.id ? { 
+                        scale: [1, 1.05, 1],
+                        opacity: 1,
+                        y: 0
+                      } : { scale: 1, opacity: 1, y: 0 }}
+                      whileHover={{ scale: 1.15, y: -5 }}
+                      transition={{ 
+                        type: "spring",
+                        stiffness: 300,
+                        damping: 15,
+                        duration: selectedPlace?.id === place.id ? 2 : undefined,
+                        repeat: selectedPlace?.id === place.id ? Infinity : undefined,
+                        ease: selectedPlace?.id === place.id ? "easeInOut" : undefined 
+                      }}
+                    >
+                      <BuzzMarker 
+                        userRatingCount={place.userRatingCount} 
+                        isSelected={selectedPlace?.id === place.id}
+                        activeWeather={activeWeather}
+                      />
+                    </motion.div>
+                  </div>
+                )}
+                {!place.isCluster && selectedPlace?.id === place.id && (
+                    <InfoBubble 
+                        crowdDensity={Math.floor(Math.random() * 100)} 
+                        noiseLevel={Math.floor(Math.random() * 100)} 
+                        mode={'default'}
+                        onExpand={() => handlePlaceClick(place)}
+                        crowdTrend={Math.random() > 0.5 ? 'up' : 'down'}
+                        noiseTrend={Math.random() > 0.5 ? 'stable' : 'up'}
+                    />
+                )}
+              </motion.div>
+            </SafeAdvancedMarker>
+          );
+        })}
+
+        {isMapIdle && map && markerLib && userLocation && (
+          <SafeAdvancedMarker 
+            key="user-location-marker"
+            position={userLocation} 
+            title="You are here"
+          >
+            <div className="relative flex items-center justify-center">
+              {/* Radiating Sonar Ping matched every 5 seconds */}
+              <AnimatePresence mode="popLayout">
+                <motion.div
+                  key={pingKey}
+                  initial={{ scale: 0.8, opacity: 0.8, borderWidth: "3px" }}
+                  animate={{ scale: 4.8, opacity: 0, borderWidth: "1.5px" }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 3.5, ease: [0.1, 0.8, 0.25, 1] }}
+                  className="absolute w-12 h-12 rounded-full border-blue-400 bg-blue-500/10 pointer-events-none"
+                />
+              </AnimatePresence>
+
+              <div className="w-8 h-8 rounded-full bg-blue-500/20 flex items-center justify-center animate-pulse z-10">
+                <div className="w-4 h-4 rounded-full bg-blue-500 border-2 border-white shadow-lg"></div>
+              </div>
+            </div>
+          </SafeAdvancedMarker>
+        )}
+
+        {/* Custom Animated Trending Pins Layer */}
+        {showTrendingPins && isMapIdle && map && markerLib && trendingPlaces.map((place: any, idx: number) => {
+          return (
+            <SafeAdvancedMarker
+              key={`trending-pin-${place.id}`}
+              position={{ lat: place.lat, lng: place.lng }}
+              title={place.displayName}
+              onClick={() => handlePlaceClick(place)}
+            >
+              <motion.div
+                initial={{ scale: 0, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                transition={{ delay: idx * 0.1, type: "spring", stiffness: 180, damping: 14 }}
+                className="relative flex flex-col items-center cursor-pointer group"
+              >
+                {/* Rippling outer radar ring/pulse */}
+                <div className="absolute inset-0 rounded-full bg-rose-500/20 animate-ping scale-150 opacity-60" style={{ animationDuration: '2.5s' }} />
+                
+                {/* Custom Glowing Neon Core */}
+                <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-rose-500 via-pink-500 to-amber-400 p-[2px] shadow-[0_4px_15px_rgba(244,63,94,0.4)] relative z-10 hover:scale-115 active:scale-95 transition-all duration-300 flex items-center justify-center border-t border-white/45">
+                  <div className="w-full h-full rounded-full bg-slate-950 flex items-center justify-center text-white">
+                    <Flame className="w-4.5 h-4.5 text-rose-500 fill-rose-500 animate-pulse" />
+                  </div>
+                </div>
+
+                {/* Floating Tag Overlay on Marker Hover */}
+                <div className="absolute bottom-12 bg-slate-950/95 backdrop-blur-md border border-rose-500/35 px-2.5 py-1.5 rounded-2xl shadow-[0_10px_30px_rgba(0,0,0,0.8)] flex flex-col items-start min-w-[150px] scale-0 group-hover:scale-100 transition-all duration-300 pointer-events-none z-30 origin-bottom shadow-rose-950/30">
+                  <span className="text-[7px] font-black tracking-widest text-rose-400 uppercase leading-none">{place.badgeText}</span>
+                  <span className="text-[9.5px] font-black text-white mt-1 truncate max-w-[135px] leading-tight">{place.displayName}</span>
+                  <p className="text-[8px] text-slate-400 font-medium mt-1 leading-snug max-w-[135px] line-clamp-2">{place.reason}</p>
+                  <div className="flex items-center justify-between w-full mt-1.5 pt-1.5 border-t border-white/5 font-mono text-[7px] text-slate-500">
+                    <span>TREND INDEX:</span>
+                    <span className="text-amber-400 font-bold bg-amber-400/10 px-1 rounded">{place.trendScore}% MATCH</span>
+                  </div>
+                </div>
+
+                {/* Small indicator pin base pointer */}
+                <div className="w-2 h-2 bg-rose-500 rotate-45 -mt-1 relative z-0 border-r border-b border-rose-600/30" />
+              </motion.div>
+            </SafeAdvancedMarker>
+          );
+        })}
+
+        {/* Route Calculations */}
+        {((routingOrigin && selectedPlace && routingOrigin.id !== selectedPlace.id) || (!routingOrigin && userLocation && selectedPlace)) && (
+          <RouteDisplay 
+            origin={
+              routingOrigin ? {
+                lat: typeof routingOrigin.location?.lat === 'function' ? routingOrigin.location.lat() : (routingOrigin.location?.lat || routingOrigin.lat),
+                lng: typeof routingOrigin.location?.lng === 'function' ? routingOrigin.location.lng() : (routingOrigin.location?.lng || routingOrigin.lng)
+              } : userLocation!
+            } 
+            destination={{ 
+              lat: typeof selectedPlace.location?.lat === 'function' ? selectedPlace.location.lat() : (selectedPlace.location?.lat || selectedPlace.lat), 
+              lng: typeof selectedPlace.location?.lng === 'function' ? selectedPlace.location.lng() : (selectedPlace.location?.lng || selectedPlace.lng)
+            }} 
+            userLocation={userLocation}
+            onDeviate={() => triggerHaptic('impact')}
+          />
+        )}
+      </Map>
+      </MapErrorBoundary>
+      )}
+
+      {/* Real-time Atmospheric Dynamic Overlay (Clouds, Rain, Storm, Sun flares or Sno drift) */}
+      {showWeatherOverlay && openWeatherMapData && (
+        <AtmosphericOverlay weather={openWeatherMapData} />
+      )}
+      </div>
+
+      {/* Omnia Geospatial AI Radar Overlay */}
+      <AnimatePresence>
+        {isOmniaScanning && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.8 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 1.2 }}
+            className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none z-10 flex flex-col items-center justify-center"
+          >
+            <div className="relative flex items-center justify-center">
+              <div className="w-[800px] h-[800px] rounded-full border border-amber-500/20 absolute" />
+              <div className="w-[600px] h-[600px] rounded-full border border-amber-500/30 absolute" />
+              <div className="w-[400px] h-[400px] rounded-full border border-amber-500/40 absolute" />
+              <div className="w-1 h-[400px] bg-gradient-to-t from-transparent via-amber-400 to-transparent absolute origin-bottom bottom-1/2 animate-[spin_2s_linear_infinite] opacity-70" />
+              <div className="w-32 h-32 bg-amber-500/20 backdrop-blur-3xl border border-amber-400 rounded-2xl flex flex-col items-center justify-center text-amber-400 shadow-[0_0_50px_rgba(245,158,11,0.5)] z-20 pulse-animation">
+                <RadarIcon className="w-8 h-8 animate-[spin_3s_linear_infinite]" />
+                <span className="text-[10px] font-black uppercase tracking-widest mt-2 bg-gradient-to-r from-amber-200 to-amber-500 bg-clip-text text-transparent">Omnia</span>
+              </div>
+            </div>
+            
+            <div className="mt-4 bg-black/60 backdrop-blur-sm border border-amber-500/30 text-amber-400 font-mono text-xs px-4 py-2 rounded-full uppercase tracking-wider font-bold">
+               Analyzing Spatial Intent...
+            </div>
+          </motion.div>
+        )}
+        {isCinematicMode && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 20 }}
+            className="fixed top-8 left-1/2 -translate-x-1/2 z-[150] pointer-events-auto"
+          >
+            <button 
+              onClick={() => setIsCinematicMode(false)}
+              className="px-6 py-3 bg-red-600/90 backdrop-blur-md border border-white/20 rounded-full text-white font-black uppercase text-[10px] tracking-[0.3em] flex items-center gap-3 shadow-[0_10px_30px_rgba(220,38,38,0.3)] hover:bg-red-500 transition-all active:scale-95 group"
+            >
+              <div className="w-2 h-2 bg-white rounded-full animate-pulse shadow-sm" />
+              Rec Recording... Stop
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Primary UI Layer */}
+      <div className="absolute inset-0 pointer-events-none z-20 flex flex-col p-3 md:p-6 pb-24 md:pb-6">
+        {/* Top: Branding & Search */}
+        <div className="w-full flex flex-col gap-3">
+          <div className="flex items-center justify-between w-full">
+            <div className="bg-[#0f1117]/95 backdrop-blur-3xl border border-white/10 h-11 px-4 rounded-2xl flex items-center gap-3 shadow-2xl pointer-events-auto transition-all active:scale-95 group">
+               <Compass className="w-5 h-5 text-rose-500" />
+               <div className="flex flex-col items-start select-none">
+                  <span className="text-[10px] font-black uppercase text-white tracking-widest leading-none">VANTi OS</span>
+                  <span className="text-[8px] font-bold text-slate-500 uppercase tracking-widest leading-none mt-0.5">Seoul Hub</span>
+               </div>
+            </div>
+
+            <div className="flex items-center gap-2 pointer-events-auto">
+              <AnimatePresence>
+                {showWeatherOverlay && (
+                  <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }} className="relative group/weather">
+                    <WeatherCenterOverlay lat={debouncedCenter.lat} lng={debouncedCenter.lng} />
+                    <button onClick={() => setShowWeatherOverlay(false)} className="absolute -top-1 -right-1 w-4 h-4 bg-slate-800 border border-white/10 rounded-full flex items-center justify-center text-slate-400 opacity-0 group-hover/weather:opacity-100 transition-opacity">
+                      <X className="w-2.5 h-2.5" />
+                    </button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+              <button onClick={() => setShowSettingsModal(true)} className="w-11 h-11 bg-[#0f1117]/95 backdrop-blur-2xl border border-white/10 rounded-2xl flex items-center justify-center text-slate-400 hover:text-white transition-all shadow-xl active:scale-95">
+                <Settings className="w-5 h-5" />
+              </button>
+            </div>
+          </div>
+
+          <div className="w-full max-w-xl mx-auto pointer-events-auto relative">
+            <div className="relative group/search">
+               <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 group-focus-within:text-rose-500 transition-colors" />
+               <input 
+                 type="text"
+                 value={queryText}
+                 onChange={(e) => handleInputChange(e.target.value)}
+                 onFocus={() => setShowSuggestions(true)}
+                 placeholder="Search destination..."
+                 className="w-full h-12 bg-[#0f1117]/95 backdrop-blur-3xl border border-white/10 rounded-2xl pl-12 pr-4 text-sm text-white focus:outline-none focus:ring-2 focus:ring-rose-500/30 transition-all shadow-2xl"
+               />
+            </div>
+            {/* Suggestions logic remains same, just better styled overlay */}
+            <AnimatePresence>
+               {showSuggestions && (suggestions.length > 0 || !queryText.trim()) && (
+                  <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="absolute top-14 left-0 right-0 bg-[#0f1117]/98 backdrop-blur-3xl border border-white/10 rounded-2xl overflow-hidden shadow-2xl z-[100]">
+                    <div className="max-h-[300px] overflow-y-auto py-2">
+                      <AnimatePresence mode="popLayout">
+                        {suggestions.map((suggestion, idx) => (
+                          <motion.button 
+                            key={`suggestion-${idx}`} 
+                            initial={{ opacity: 0, x: -10 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            exit={{ opacity: 0, x: 10 }}
+                            transition={{ delay: idx * 0.03, duration: 0.2 }}
+                            onClick={() => handleSuggestionSelect(suggestion)} 
+                            className="w-full px-4 py-3 flex items-start gap-3 hover:bg-white/5 transition-colors group text-left border-b border-white/[0.03] last:border-0"
+                          >
+                             <MapPin className="w-4 h-4 text-slate-400 group-hover:text-rose-400 mt-1" />
+                             <div className="min-w-0 flex-1">
+                                <p className="text-[11px] font-bold text-slate-200 group-hover:text-white truncate">{suggestion.placePrediction?.text.text}</p>
+                                <p className="text-[9px] text-slate-500 truncate mt-0.5">{suggestion.placePrediction?.text.text.split(',').slice(1).join(',').trim()}</p>
+                             </div>
+                          </motion.button>
+                        ))}
+                      </AnimatePresence>
+                    </div>
+                  </motion.div>
+               )}
+            </AnimatePresence>
+          </div>
+        </div>
+
+        {/* Bottom Navigation Bar (Consolidated for Mobile Optimization) */}
+        <div className="absolute inset-x-0 bottom-0 p-4 md:p-6 flex flex-col items-center gap-4 pointer-events-none mb-1">
+          
+          <div className="w-full flex justify-between items-end gap-3 pointer-events-none">
+            {/* Left side info (Speedometer) */}
+            <div className="flex-1 pointer-events-none">
+              {showSpeedometer && (
+                <motion.div 
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  className="bg-[#0f1117]/95 backdrop-blur-3xl border border-white/10 p-3 rounded-2xl flex flex-col items-center justify-center shadow-2xl pointer-events-auto min-w-[70px] relative group/speed"
+                >
+                  <span className="text-2xl font-black text-white leading-none tracking-tighter">42</span>
+                  <span className="text-[8px] text-slate-500 font-bold uppercase tracking-widest mt-1">KM/H</span>
+                  <button onClick={() => setShowSpeedometer(false)} className="absolute -top-1 -right-1 w-4 h-4 bg-slate-800 border border-white/10 rounded-full flex items-center justify-center text-slate-400 opacity-0 group-hover/speed:opacity-100 transition-opacity"><X className="w-2.5 h-2.5" /></button>
+                </motion.div>
+              )}
+            </div>
+
+            {/* Right side floating map controls (Zoom/Recenter) */}
+            <div className="flex flex-col gap-2.5 pointer-events-auto">
+              {/* Interactive Layer Switches */}
+              <div className="flex flex-col bg-[#0f1117]/95 backdrop-blur-3xl border border-white/10 p-1 rounded-2xl shadow-2xl scale-95 origin-right">
+                  <button 
+                    onClick={() => {
+                      setShowTrendingPins(!showTrendingPins);
+                      triggerHaptic('switch');
+                    }} 
+                    className={cn(
+                      "p-3 rounded-xl transition-all relative group", 
+                      showTrendingPins ? "text-rose-500 bg-rose-500/10" : "text-slate-500 hover:text-white"
+                    )}
+                    title="Toggle Trending Pins"
+                  >
+                    <Flame className="w-5 h-5 animate-pulse" />
+                    <span className="absolute right-full mr-2 px-2 py-1 bg-slate-950/90 text-[7px] font-bold text-white uppercase rounded border border-white/10 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">Trending Spots</span>
+                  </button>
+                  <div className="w-1/2 h-px bg-white/5 mx-auto" />
+                  <button 
+                    onClick={() => {
+                      setShowWeatherOverlay(!showWeatherOverlay);
+                      triggerHaptic('switch');
+                    }} 
+                    className={cn(
+                      "p-3 rounded-xl transition-all relative group", 
+                      showWeatherOverlay ? "text-sky-400 bg-sky-500/10" : "text-slate-500 hover:text-white"
+                    )}
+                    title="Toggle Weather Overlay"
+                  >
+                    <Cloud className="w-5 h-5" />
+                    <span className="absolute right-full mr-2 px-2 py-1 bg-slate-950/90 text-[7px] font-bold text-white uppercase rounded border border-white/10 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">Weather Atmospheric Overlay</span>
+                  </button>
+                  <div className="w-1/2 h-px bg-white/5 mx-auto" />
+                  <button 
+                    onClick={() => {
+                      setShowTrafficLayer(!showTrafficLayer);
+                      triggerHaptic('switch');
+                    }} 
+                    className={cn(
+                      "p-3 rounded-xl transition-all relative group", 
+                      showTrafficLayer ? "text-emerald-400 bg-emerald-500/10" : "text-slate-500 hover:text-white"
+                    )}
+                    title="Toggle Traffic Layer"
+                  >
+                    <Layers className="w-5 h-5" />
+                    <span className="absolute right-full mr-2 px-2 py-1 bg-slate-950/90 text-[7px] font-bold text-white uppercase rounded border border-white/10 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">Live Traffic</span>
+                  </button>
+              </div>
+
+              <div className="flex flex-col bg-[#0f1117]/95 backdrop-blur-3xl border border-white/10 p-1 rounded-2xl shadow-2xl">
+                 <button onClick={() => setMapZoom(z => Math.min(z + 1, 21))} className="p-3 text-slate-400 hover:text-white transition-all active:bg-white/5 rounded-xl"><Plus className="w-5 h-5" /></button>
+                 <div className="w-1/2 h-px bg-white/5 mx-auto" />
+                 <button onClick={() => setMapZoom(z => Math.max(z - 1, 1))} className="p-3 text-slate-400 hover:text-white transition-all active:bg-white/5 rounded-xl"><Minus className="w-5 h-5" /></button>
+              </div>
+
+              <div className="flex flex-col bg-[#0f1117]/95 backdrop-blur-3xl border border-white/10 p-1 rounded-2xl shadow-2xl">
+                 <button 
+                  onClick={() => {
+                    setIsAROpen(!isAROpen);
+                    triggerHaptic('mode3d');
+                  }} 
+                  className={cn(
+                    "p-3 rounded-xl transition-all", 
+                    isAROpen ? "bg-cyan-500 text-white shadow-lg shadow-cyan-500/30" : "text-slate-400 hover:text-white"
+                  )}
+                  title="AR Camera Mode"
+                >
+                  <Camera className="w-5 h-5" />
+                </button>
+                 <div className="w-1/2 h-px bg-white/5 mx-auto" />
+                 <button onClick={() => setPerspectiveLock(!perspectiveLock)} className={cn("p-3 rounded-xl transition-all", perspectiveLock ? "bg-rose-500 text-white shadow-lg shadow-rose-500/30" : "text-slate-400 hover:text-white")}><LocateFixed className="w-5 h-5" /></button>
+                 <div className="w-1/2 h-px bg-white/5 mx-auto" />
+                 <button onClick={() => setIs3DActive(!is3DActive)} className={cn("p-3 rounded-xl transition-all", is3DActive ? "text-rose-400 bg-rose-500/10" : "text-slate-400 hover:text-white")}><Box className="w-5 h-5" /></button>
+              </div>
+              
+              <button onClick={() => { triggerRecenter(); triggerHaptic('impact'); }} className="w-12 h-12 bg-rose-500 hover:bg-rose-600 rounded-2xl flex items-center justify-center text-white shadow-lg shadow-rose-500/30 active:scale-95 transition-all">
+                 <Crosshair className="w-6 h-6" />
+              </button>
+            </div>
+          </div>
+
+          {/* Main Action Bar */}
+          <div className="w-full max-w-lg bg-[#0f1117]/90 backdrop-blur-3xl border border-white/10 p-2 rounded-[2rem] shadow-2xl flex items-center gap-1.5 pointer-events-auto ring-1 ring-white/5">
+            {[
+              { id: 'explore', label: 'Explore', icon: Compass },
+              { id: 'route', label: 'Route', icon: Navigation },
+              { id: 'profile', label: 'Nodes', icon: Layers },
+              { id: 'config', label: 'Ops', icon: Settings },
+            ].map(tab => {
+              const Icon = tab.icon;
+              const active = (tab.id === 'route' && showRoutePlanner) || 
+                             (tab.id === 'config' && showControls) ||
+                             (tab.id === 'explore' && activeMode === 'all' && !showRoutePlanner && !showControls) ||
+                             (tab.id === 'profile' && activeMode === 'profile');
+              
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => {
+                    triggerHaptic('switch');
+                    if (tab.id === 'route') {
+                      setShowRoutePlanner(!showRoutePlanner);
+                      setShowControls(false);
+                      if (activeMode === 'profile') setActiveMode('all');
+                    } else if (tab.id === 'config') {
+                      setShowControls(!showControls);
+                      setShowRoutePlanner(false);
+                    } else if (tab.id === 'profile') {
+                      setActiveMode('profile');
+                      setShowRoutePlanner(false);
+                      setShowControls(false);
+                    } else {
+                      setActiveMode('all');
+                      setShowRoutePlanner(false);
+                      setShowControls(false);
+                    }
+                  }}
+                  className={cn(
+                    "flex-1 flex flex-col items-center justify-center py-2.5 rounded-2xl transition-all relative group",
+                    active ? "text-rose-500" : "text-slate-500 hover:text-slate-300"
+                  )}
+                >
+                  {active && <motion.div layoutId="nav-active" className="absolute inset-0 bg-white/5 rounded-2xl border border-white/5" />}
+                  <Icon className={cn("w-5 h-5 mb-1 z-10 transition-transform", active && "scale-110")} />
+                  <span className="text-[8px] font-black uppercase tracking-[0.2em] z-10 leading-none">{tab.label}</span>
+                </button>
+              );
+            })}
+          </div>
+
+        </div>
+      </div>
+
+      {/* Style Switcher Modal */}
+      <AnimatePresence>
+        {showStyleSwitcher && (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center p-6 bg-black/60 backdrop-blur-md pointer-events-auto">
+            <FocusLock returnFocus className="contents">
+              <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              drag="y"
+              dragConstraints={{ top: 0, bottom: 0 }}
+              dragElastic={{ top: 0, bottom: 1 }}
+              onDragEnd={(e, info) => {
+                if (info.offset.y > 100 || info.velocity.y > 500) {
+                  setShowStyleSwitcher(false);
+                }
+              }}
+              className="w-full max-w-lg glass-dark border-white/10 rounded-[2.5rem] p-8 shadow-2xl relative overflow-hidden"
+            >
+              <div className="flex justify-between items-center mb-8">
+                <div className="space-y-1">
+                  <h3 className="text-xl font-black text-white uppercase italic tracking-tighter leading-none">Map Environment</h3>
+                  <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest leading-none mt-1">Select visual skin generator</p>
+                </div>
+                <button 
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    setShowStyleSwitcher(false);
+                  }} 
+                  className="w-10 h-10 flex items-center justify-center rounded-full bg-white/5 text-slate-400 hover:text-white transition-colors"
+                >
+                  <X className="w-5 h-5"/>
+                </button>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                {Object.keys(MAP_STYLES).map((style) => (
+                  <button
+                    key={style}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      e.preventDefault();
+                      setMapTheme(style);
+                      triggerHaptic('switch');
+                    }}
+                    className={cn(
+                      "group relative flex flex-col items-center justify-center gap-3 p-4 rounded-2xl border transition-all duration-300",
+                      mapTheme === style 
+                        ? "bg-rose-500/20 border-rose-500/40 text-white shadow-lg" 
+                        : "bg-white/5 border-transparent text-slate-400 hover:bg-white/10"
+                    )}
+                  >
+                    <div className={cn(
+                      "w-12 h-12 rounded-xl flex items-center justify-center mb-1 group-hover:scale-110 transition-transform",
+                      mapTheme === style ? "bg-rose-500 text-white" : "bg-slate-800 text-slate-500"
+                    )}>
+                      {style === 'Default' && <MapIcon className="w-6 h-6" />}
+                      {style === 'Night' && <Eye className="w-6 h-6" />}
+                      {style === 'Silver' && <Box className="w-6 h-6" />}
+                      {style === 'Retro' && <Mountain className="w-6 h-6" />}
+                      {style === 'Simulation' && <RadarIcon className="w-6 h-6" />}
+                      {style === 'Genie' && <Sparkles className="w-6 h-6" />}
+                      {style === 'Cosmic' && <LogIn className="w-6 h-6" />}
+                      {style === 'Neo-Tokyo' && <Navigation className="w-6 h-6" />}
+                      {style === 'Midnight' && <EyeOff className="w-6 h-6" />}
+                      {style === 'Sketch' && <MapPin className="w-6 h-6" />}
+                    </div>
+                    <span className="text-[10px] font-black uppercase tracking-widest">{style}</span>
+                    {mapTheme === style && <motion.div layoutId="active-style" className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1.5 h-1.5 bg-rose-500 rounded-full" />}
+                  </button>
+                ))}
+              </div>
+
+              <div className="mt-8 pt-6 border-t border-white/5 flex justify-end">
+                <button 
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    setShowStyleSwitcher(false);
+                  }}
+                  className="px-8 h-12 bg-white text-black text-[11px] font-black uppercase tracking-[0.2em] rounded-2xl transition-transform active:scale-95 shadow-xl hover:bg-slate-200"
+                >
+                  Apply Config
+                </button>
+              </div>
+            </motion.div>
+            </FocusLock>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* AI Suite Pop-up Overlay (Replaces the messy HUD pop-up) */}
+      <AnimatePresence>
+        {aiSuiteOpen && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/40 backdrop-blur-sm pointer-events-auto">
+            <FocusLock returnFocus className="contents">
+              <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              drag="y"
+              dragConstraints={{ top: 0, bottom: 0 }}
+              dragElastic={{ top: 0, bottom: 1 }}
+              onDragEnd={(e, info) => {
+                if (info.offset.y > 100 || info.velocity.y > 500) {
+                  setAiSuiteOpen(false);
+                }
+              }}
+              className="w-full max-w-sm glass-dark border-white/5 rounded-[2rem] p-8 shadow-2xl relative overflow-hidden"
+            >
+              <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-rose-500 to-transparent opacity-50" />
+              
+              <div className="flex justify-between items-start mb-8">
+                <div className="space-y-1">
+                  <h3 className="text-xl font-black text-white uppercase italic tracking-tighter leading-none">System Utility</h3>
+                  <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Environment & AI Config</p>
+                </div>
+                <button 
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    setAiSuiteOpen(false);
+                  }} 
+                  className="p-2 text-slate-500 hover:text-white transition-colors bg-white/5 rounded-full"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="space-y-8">
+                <button 
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    setIsOmniaScanning(true);
+                    setTimeout(() => setIsOmniaScanning(false), 3000);
+                    setAiSuiteOpen(false);
+                  }}
+                  className="w-full group relative p-6 rounded-2xl bg-gradient-to-br from-amber-500 via-amber-600 to-orange-700 overflow-hidden shadow-2xl text-left"
+                >
+                  <div className="absolute inset-0 bg-white/20 opacity-0 group-hover:opacity-100 transition-opacity" />
+                  <div className="relative z-10 flex flex-col gap-1">
+                    <RadarIcon className="w-8 h-8 text-white mb-2" />
+                    <span className="text-lg font-black text-white uppercase italic leading-none">Initiate Omnia</span>
+                    <span className="text-[10px] text-white/70 font-bold uppercase tracking-wide">Topology & Intent Analysis</span>
+                  </div>
+                </button>
+
+                <button 
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    setIsCinematicMode(!isCinematicMode);
+                    triggerHaptic('mode3d');
+                    setAiSuiteOpen(false);
+                  }}
+                  className={cn(
+                    "w-full group relative p-6 rounded-2xl overflow-hidden shadow-2xl text-left transition-all",
+                    isCinematicMode 
+                      ? "bg-rose-500 border-2 border-white/30" 
+                      : "bg-gradient-to-br from-indigo-500 via-purple-600 to-blue-700"
+                  )}
+                >
+                  <div className="absolute inset-0 bg-white/20 opacity-0 group-hover:opacity-100 transition-opacity" />
+                  <div className="relative z-10 flex flex-col gap-1">
+                    <Video className={cn("w-8 h-8 text-white mb-2", isCinematicMode && "animate-pulse")} />
+                    <span className="text-lg font-black text-white uppercase italic leading-none">
+                      {isCinematicMode ? 'Stop Cinematic' : 'Cinematic Mode'}
+                    </span>
+                    <span className="text-[10px] text-white/70 font-bold uppercase tracking-wide">Immersive Camera Sequence</span>
+                  </div>
+                  {isCinematicMode && (
+                    <div className="absolute top-4 right-4 w-3 h-3 bg-red-500 rounded-full animate-pulse shadow-[0_0_10px_rgba(239,68,68,0.8)]" />
+                  )}
+                </button>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest pl-1">Haptic Engine</label>
+                    <div className="h-10 bg-white/5 rounded-xl flex items-center px-4"><div className="w-full h-1 bg-slate-800 rounded-full"><div className="h-full bg-rose-500 w-1/2 rounded-full" /></div></div>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest pl-1">Visual Sim</label>
+                    <div className="h-10 bg-white/5 rounded-xl flex items-center px-4"><div className="w-full h-1 bg-slate-800 rounded-full"><div className="h-full bg-blue-500 w-3/4 rounded-full" /></div></div>
+                  </div>
+                </div>
+
+                <div className="pt-4 border-t border-white/5 flex gap-3">
+                   {['minimalist', 'glow', 'classic'].map(t => (
+                     <button 
+                      key={t} 
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        e.preventDefault();
+                        setMarkerTheme(t as any);
+                      }} 
+                      className={cn("flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all", markerTheme === t ? "bg-white text-black" : "bg-white/5 text-slate-500 hover:text-white")}
+                    >
+                      {t}
+                    </button>
+                   ))}
+                </div>
+              </div>
+            </motion.div>
+            </FocusLock>
+          </div>
+        )}
+      </AnimatePresence>
+      
+      {/* Multimodal Gemini Smart chatbot companion */}
+      <Chatbot onMapCommand={handleMapCommand} isVisible={!showList} />
+      
+
+
+      <SoundEngine 
+        theme={mapTheme} 
+        selectedPlace={selectedPlace} 
+        mapCenter={mapCenter} 
+        mapHeading={mapHeading} 
+      />
+
+      {/* Nearby Highlights Summary Card (appears when zoomed in, showList is false, and no place is selected) */}
+      <AnimatePresence>
+        {mapZoom >= 15.5 && !showList && !selectedPlace && nearbyHighlights.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, x: -50, scale: 0.95 }}
+            animate={{ 
+              opacity: 1, 
+              x: 0, 
+              scale: 1,
+              height: isHighlightsExpanded ? '50vh' : 'auto'
+            }}
+            exit={{ opacity: 0, x: -50, scale: 0.95 }}
+            transition={{ type: "spring", damping: 25, stiffness: 180 }}
+            onClick={(e) => {
+              if ((e.target as HTMLElement).closest('button')) return;
+              setIsHighlightsExpanded(!isHighlightsExpanded);
+              triggerHaptic('tap');
+            }}
+            className={cn(
+              "absolute left-4 right-4 md:right-auto md:left-6 w-[calc(100vw-2rem)] md:w-[360px] max-w-[360px] bg-slate-950/90 hover:bg-slate-950/95 backdrop-blur-3xl border border-indigo-500/10 hover:border-indigo-500/25 rounded-[2.25rem] p-5 shadow-2xl z-40 pointer-events-auto flex flex-col gap-3 transition-colors duration-300 cursor-pointer overflow-hidden max-h-[90vh]",
+              isHighlightsExpanded ? "bottom-[110px]" : "top-[28%] md:top-24"
+            )}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-white/5 pb-2.5 shrink-0">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-full bg-indigo-500/10 flex items-center justify-center text-indigo-400">
+                  <Compass className="w-4 h-4 animate-spin-slow" />
+                </div>
+                <div>
+                  <h3 className="text-xs font-black uppercase tracking-wider text-white font-mono">NEARBY HIGHLIGHTS</h3>
+                  <div className="flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                    <span className="text-[8px] font-mono font-bold text-slate-400 uppercase">
+                      {isHighlightsExpanded ? 'Expanded Matrix' : 'Interactive Viewport'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <button 
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    triggerHaptic('close');
+                    setNearbyHighlights([]);
+                  }}
+                  className="w-8 h-8 flex items-center justify-center rounded-full bg-slate-800/40 hover:bg-slate-700/60 text-slate-400 hover:text-white transition-colors z-50 shrink-0"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* List */}
+            <div className={cn(
+              "flex flex-col gap-2 overflow-y-auto scrollbar-none",
+              isHighlightsExpanded ? "flex-1" : "max-h-[280px]"
+            )}>
+              {loadingHighlights ? (
+                <div className="space-y-3 p-1">
+                  {[1, 2, 3].map(i => (
+                    <div key={i} className="flex gap-3 p-3 rounded-2xl bg-white/5 border border-white/5">
+                      <Skeleton className="w-14 h-14 rounded-xl shrink-0" />
+                      <div className="flex-1 space-y-2">
+                        <SkeletonText className="w-2/3 h-3" />
+                        <SkeletonText className="w-1/2 h-2" />
+                        <div className="flex gap-2">
+                          <Skeleton className="w-8 h-3 rounded" />
+                          <Skeleton className="w-12 h-3 rounded" />
+                        </div>
+                      </div>
+                      <div className="flex flex-col gap-2">
+                        <SkeletonCircle size="w-8 h-8" />
+                        <SkeletonCircle size="w-8 h-8" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                nearbyHighlights.map((spot, idx) => (
+                  <motion.div
+                    key={spot.id || idx}
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: idx * 0.05 }}
+                    className={cn(
+                      "group relative flex flex-col p-3 rounded-2xl bg-white/5 hover:bg-white/10 border transition-all duration-200 cursor-pointer",
+                      isHighlightsExpanded ? "border-indigo-500/20" : "border-white/5 hover:border-indigo-500/20"
+                    )}
+                    onClick={(e) => {
+                      if ((e.target as HTMLElement).closest('button')) return;
+                      handlePlaceClick(spot);
+                    }}
+                  >
+                    <div className="flex items-start gap-3">
+                      {/* Thumbnail Image */}
+                      <div className="w-14 h-14 rounded-xl overflow-hidden bg-slate-900 border border-white/10 shrink-0">
+                        <img 
+                          src={spot.imageUrl || (spot.photos && spot.photos.length > 0 ? spot.photos[0].getURI({ maxWidth: 200 }) : "https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?auto=format&fit=crop&w=150&q=80")}
+                          alt={spot.displayName}
+                          referrerPolicy="no-referrer"
+                          className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300"
+                          onError={(e: any) => {
+                            e.target.src = "https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?auto=format&fit=crop&w=150&q=80";
+                          }}
+                        />
+                      </div>
+
+                      {/* Meta */}
+                      <div className="flex-1 min-w-0 pr-1 select-none">
+                        <h4 className="text-[11.5px] font-extrabold text-white truncate group-hover:text-indigo-300 transition-colors leading-tight">{spot.displayName}</h4>
+                        <p className="text-[8.5px] text-slate-400 truncate uppercase mt-0.5">{spot.types?.[0]?.replace(/_/g, ' ') || "point of interest"}</p>
+                        
+                        <div className="flex items-center gap-2 mt-1.5">
+                          <div className="flex items-center gap-0.5 text-[10px] text-amber-400 font-bold font-mono">
+                            <Star className="w-3 h-3 fill-current" />
+                            <span>{spot.rating?.toFixed(1) || "4.5"}</span>
+                          </div>
+                          {spot.userRatingCount && (
+                            <span className="text-[9px] font-mono text-slate-500 font-medium">({spot.userRatingCount})</span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Actions Cluster */}
+                      <div className="flex flex-col gap-1.5 shrink-0 z-10">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            triggerHaptic('success');
+                            const isAdded = bookmarkedSpotIds.has(spot.id);
+                            
+                            const nextIds = new Set(bookmarkedSpotIds);
+                            if (isAdded) {
+                              nextIds.delete(spot.id);
+                              setBookmarkedSpotIds(nextIds);
+                            } else {
+                              nextIds.add(spot.id);
+                              setBookmarkedSpotIds(nextIds);
+                              const lat = typeof spot.location?.lat === 'function' ? spot.location.lat() : (spot.location?.lat || spot.lat);
+                              const lng = typeof spot.location?.lng === 'function' ? spot.location.lng() : (spot.location?.lng || spot.lng);
+                              handleQuickSaveBookmark(lat, lng, spot.displayName);
+                            }
+                          }}
+                          className={cn(
+                            "p-2 rounded-xl transition-all flex items-center justify-center w-8 h-8 active:scale-95",
+                            bookmarkedSpotIds.has(spot.id) 
+                              ? "bg-rose-500/20 text-rose-400 border border-rose-500/30" 
+                              : "bg-white/5 hover:bg-rose-500/10 text-slate-400 hover:text-rose-400 border border-white/5"
+                          )}
+                          title="Save to Travel Diary"
+                        >
+                          <Heart className={cn("w-4 h-4", bookmarkedSpotIds.has(spot.id) && "fill-current")} />
+                        </button>
+
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            triggerHaptic('switch');
+                            const lat = typeof spot.location?.lat === 'function' ? spot.location.lat() : (spot.location?.lat || spot.lat);
+                            const lng = typeof spot.location?.lng === 'function' ? spot.location.lng() : (spot.location?.lng || spot.lng);
+                            if (lat && lng) {
+                              animateFlyTo(map, { lat, lng }, 18.2, 55, 35, 1400);
+                              setMapCenter({ lat, lng });
+                              setSelectedPlace(spot);
+                              setShowList(true);
+                            }
+                          }}
+                          className="p-2 rounded-xl bg-indigo-500/10 hover:bg-indigo-500 text-indigo-400 hover:text-white border border-indigo-500/20 transition-all flex items-center justify-center w-8 h-8 active:scale-95"
+                          title="Cinematic Fly-To"
+                        >
+                          <Navigation className="w-4 h-4 rotate-45" />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Expandable Details Section */}
+                    <AnimatePresence>
+                      {isHighlightsExpanded && (
+                        <motion.div
+                          initial={{ opacity: 0, height: 0 }}
+                          animate={{ opacity: 1, height: 'auto' }}
+                          exit={{ opacity: 0, height: 0 }}
+                          className="overflow-hidden mt-3 pt-3 border-t border-white/5 space-y-3"
+                        >
+                          {/* Rich Galleries Grid */}
+                          {spot.photos && spot.photos.length > 0 && (
+                            <div>
+                              <span className="text-[8px] font-black tracking-widest uppercase text-slate-500 font-mono mb-1.5 block">Photo Gallery</span>
+                              <div className="flex gap-2 overflow-x-auto snap-x snap-mandatory scrollbar-none pb-1">
+                                {spot.photos.slice(0, 5).map((photo: any, pid: number) => (
+                                  <img 
+                                    key={pid}
+                                    src={photo.getURI({ maxWidth: 200 })}
+                                    alt="Place"
+                                    className="w-16 h-16 rounded-xl object-cover shrink-0 snap-start border border-white/10"
+                                    referrerPolicy="no-referrer"
+                                  />
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          
+                          {/* Hours */}
+                          {spot.regularOpeningHours?.weekdayDescriptions && spot.regularOpeningHours.weekdayDescriptions.length > 0 && (
+                            <div>
+                              <span className="text-[8px] font-black tracking-widest uppercase text-slate-500 font-mono mb-1.5 block">Operating Hours</span>
+                              <p className="text-[10px] text-slate-300 font-medium leading-relaxed bg-[#0b0d12]/50 p-2 rounded-lg border border-white/5">
+                                {spot.regularOpeningHours.weekdayDescriptions[new Date().getDay() === 0 ? 6 : new Date().getDay() - 1]}
+                              </p>
+                            </div>
+                          )}
+
+                          {/* Top Review */}
+                          {spot.reviews && spot.reviews.length > 0 && (
+                            <div>
+                              <span className="text-[8px] font-black tracking-widest uppercase text-slate-500 font-mono mb-1.5 block">Top Intel Report</span>
+                              <div className="bg-[#0b0d12]/50 p-2.5 rounded-lg border border-white/5">
+                                <div className="flex items-center gap-1.5 mb-1">
+                                  <div className="flex gap-0.5">
+                                    {Array.from({ length: spot.reviews[0].rating || 5 }).map((_, rid) => (
+                                      <Star key={rid} className="w-2.5 h-2.5 fill-amber-400 text-amber-400" />
+                                    ))}
+                                  </div>
+                                  <span className="text-[8px] text-slate-400 truncate">{spot.reviews[0].authorAttribution?.displayName}</span>
+                                </div>
+                                <p className="text-[9.5px] italic text-slate-300 font-sans leading-snug line-clamp-3">
+                                  "{spot.reviews[0].text}"
+                                </p>
+                              </div>
+                            </div>
+                          )}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+
+                  </motion.div>
+                ))
+              )}
+            </div>
+
+            {/* Note */}
+            <div className="text-center pt-2 border-t border-white/5 shrink-0 select-none">
+              <span className="text-[8px] font-mono font-bold text-slate-500 uppercase tracking-widest leading-none">
+                {isHighlightsExpanded ? 'Tap To Collapse' : 'Tap To Expand Feed Matrices'}
+              </span>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Slidiable Left / Outer Overlay Panel containing search details or mode statistics (Z-index: 15) */}
+      <WeatherEffects 
+        mapTheme={mapTheme}
+        activeWeather={activeWeather}
+      />
+
+      <AnimatePresence>
+        {['Simulation', 'Genie', 'Cosmic', 'Neo-Tokyo'].includes(mapTheme) && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="absolute inset-0 pointer-events-none z-10 overflow-hidden"
+          >
+            {/* Scanline overlay for cyber themes */}
+            {(mapTheme === 'Simulation' || mapTheme === 'Neo-Tokyo') && (
+              <div className="absolute inset-0 scanline opacity-20" />
+            )}
+            
+            {/* Context-aware HUD Overlays */}
+            {mapTheme === 'Simulation' && (
+              <div className="absolute inset-0">
+                <div className="absolute inset-0 bg-[#00ff41]/5 [mask-image:radial-gradient(ellipse_at_center,transparent_20%,black_100%)] opacity-30" />
+                <div className="absolute top-24 left-10 font-mono text-[9px] text-[#00ff41]/40 uppercase tracking-[0.2em]">
+                  <div className="flex items-center gap-1.5 mb-2 font-bold">
+                    <div className="w-1.5 h-1.5 bg-[#00ff41] animate-pulse rounded-full" />
+                    <span>Live Rendering V2.4</span>
+                  </div>
+                  Spatial: {mapCenter.lat.toFixed(4)}N / {mapCenter.lng.toFixed(4)}E
+                </div>
+              </div>
+            )}
+            {mapTheme === 'Genie' && (
+              <div className="absolute inset-0 pointer-events-none">
+                <div className="absolute top-10 right-10 flex flex-col items-end gap-1 opacity-40">
+                  <span className="text-[10px] font-bold text-purple-400 border-r border-purple-500 pr-2">Genie Intuition Active</span>
+                  <span className="text-[8px] text-purple-400/50">Semantic Context Layer</span>
+                </div>
+              </div>
+            )}
+            {mapTheme === 'Neo-Tokyo' && (
+              <div className="absolute inset-0 pointer-events-none">
+                 <div className="absolute top-20 left-10 opacity-60">
+                    <div className="px-2 py-0.5 bg-pink-500 text-white text-[9px] font-black uppercase tracking-widest mb-1 italic">Tokyo Protocol</div>
+                    <div className="px-2 py-0.5 bg-cyan-500 text-black text-[9px] font-black uppercase tracking-widest italic">Sync 0.1.4</div>
+                 </div>
+              </div>
+            )}
+            {mapTheme === 'Cosmic' && (
+              <div className="absolute inset-0 opacity-20 pointer-events-none">
+                <div className="absolute bottom-24 right-10 font-sans text-[10px] text-slate-500 tracking-[0.3em] uppercase">Sector Alpha Scanned</div>
+              </div>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showList && (
+          <motion.div
+            initial={{ opacity: 0, x: -300 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -300 }}
+            transition={{ type: "spring", damping: 25, stiffness: 220 }}
+            className="absolute top-[env(safe-area-inset-top,5rem)] left-0 bottom-0 w-full md:top-24 md:left-6 md:bottom-24 md:w-[380px] md:h-auto bg-slate-900/90 backdrop-blur-3xl border border-white/10 md:rounded-3xl shadow-[0_30px_60px_-15px_rgba(0,0,0,0.8)] z-50 overflow-hidden flex flex-col pointer-events-auto transition-shadow duration-500 hover:shadow-[0_40px_80px_-20px_rgba(0,0,0,1)]"
+          >
+            <div className="absolute top-4 right-4 z-[60]">
+               <button 
+                onClick={(e) => {
+                  e.stopPropagation();
+                  e.preventDefault();
+                  setShowList(false);
+                }}
+                className="p-1.5 rounded-full bg-slate-800/40 backdrop-blur-md border border-white/10 text-slate-400 hover:text-white transition-all shadow-xl hover:scale-110 active:scale-95 pointer-events-auto"
+               >
+                <X className="w-4 h-4" />
+               </button>
+            </div>
+            <AnimatePresence mode="wait">
+              {selectedPlace ? (
+                <motion.div 
+                  key="details-container"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.25 }}
+                  className="fixed inset-0 z-[100] pointer-events-none flex items-end md:items-start justify-end p-0 md:p-6 pb-[env(safe-area-inset-bottom,0px)]"
+                >
+                  <motion.div 
+                    initial={isMobile ? { y: "100%", opacity: 1 } : { x: 300, opacity: 0 }}
+                    animate={{ y: 0, x: 0, opacity: 1 }}
+                    exit={isMobile ? { y: "100%", opacity: 1 } : { x: 300, opacity: 0 }}
+                    transition={{ type: "spring", damping: 30, stiffness: 300 }}
+                    className="w-full md:w-[420px] h-[92vh] md:h-[80vh] bg-[#0f1115]/95 backdrop-blur-3xl shadow-[0_40px_100px_rgba(0,0,0,0.8)] overflow-hidden pointer-events-auto rounded-t-[2.5rem] md:rounded-[2.5rem] border border-white/10"
+                  >
+                    <AnimatePresence mode="wait">
+                      <motion.div
+                        key={`details-content-${selectedPlace.id || selectedPlace.displayName}`}
+                        initial={{ opacity: 0, scale: 0.98, filter: "blur(10px)" }}
+                        animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
+                        exit={{ opacity: 0, scale: 0.98, filter: "blur(10px)" }}
+                        transition={{ duration: 0.35, ease: [0.23, 1, 0.32, 1] }}
+                        className="w-full h-full"
+                      >
+                        <PlaceDetailsPanel 
+                          place={selectedPlace} 
+                          onBack={() => setSelectedPlace(null)} 
+                          onClose={() => { triggerHaptic('close'); setSelectedPlace(null); setShowList(false); }} 
+                          onShowRoute={() => handleShowRoute(selectedPlace)}
+                          onSetRoutingOrigin={() => {
+                            if (routingOrigin?.id === selectedPlace.id) {
+                              setRoutingOrigin(null);
+                            } else {
+                              setRoutingOrigin(selectedPlace);
+                            }
+                          }}
+                          isRoutingOrigin={routingOrigin?.id === selectedPlace?.id}
+                          user={user} 
+                          weather={activeWeather}
+                        />
+                      </motion.div>
+                    </AnimatePresence>
+                  </motion.div>
+                </motion.div>
+              ) : (
+                <motion.div 
+                  key="list" 
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -20 }}
+                  transition={{ duration: 0.18, ease: "easeOut" }}
+                  className="flex flex-col h-full bg-transparent"
+                >
+                  {/* Back / Panel Header */}
+                  <div className="p-4 md:p-5 border-b border-white/10 flex items-center justify-between bg-white/[0.02] backdrop-blur-md">
+                    <div className="flex items-center gap-2.5">
+                      <div className={cn("w-2 h-2 rounded-full animate-ping", modeStyles.bgAccent)} />
+                      <h3 className="font-display font-bold text-base text-white tracking-tight capitalize">
+                        {showingSaved ? "Saved OS Vault" : `${activeMode} Mode Hub`}
+                      </h3>
+                    </div>
+                    <button 
+                      onClick={(e) => { 
+                        e.stopPropagation(); 
+                        e.preventDefault(); 
+                        triggerHaptic('close'); 
+                        setShowList(false); 
+                      }} 
+                      className="w-10 h-10 flex items-center justify-center rounded-xl bg-white/5 text-slate-400 hover:text-white transition-all active:scale-90 pointer-events-auto"
+                    >
+                      <X className="w-5 h-5" />
+                    </button>
+                  </div>
+
+                {/* Main scrollable body container: Persistent View Stack with CSS Toggling */}
+                <div className="flex-1 overflow-y-auto p-4 scrollbar-thin scrollbar-thumb-slate-800 relative">
+                  
+                  {/* EXPLORE & DISCOVERY LAYER (Active for all, social, genius) */}
+                  <div className={cn(
+                    "space-y-5 transition-all duration-500",
+                    (activeMode === 'all' || activeMode === 'social' || activeMode === 'genius' || activeCollection) 
+                      ? "opacity-100 translate-y-0 pointer-events-auto" 
+                      : "opacity-0 translate-y-4 pointer-events-none absolute inset-x-4 top-4"
+                  )}>
+                    {/* MODE CUSTOM INSIGHTS HEADER CARD */}
+                    <div className="p-4 rounded-2xl bg-gradient-to-br from-slate-900 via-slate-950 to-slate-900 border border-slate-800/80 relative overflow-hidden shadow-xl">
+                      <div className="absolute right-[-20px] top-[-20px] opacity-10">
+                        <MapIcon className="w-24 h-24" />
+                      </div>
+
+                      <div className="space-y-1 relative z-10">
+                        <span className="text-[9px] uppercase font-black tracking-widest text-slate-500">Active Map Mode</span>
+                        <h4 className={cn("text-lg font-display font-extrabold capitalize leading-tight flex items-center gap-1.5", modeStyles.accent)}>
+                          {activeCollection ? 'List Discovery' : `${activeMode} Explorer`}
+                        </h4>
+                        <div className="pt-1.5 flex flex-wrap gap-1">
+                          <span className="text-[10px] bg-slate-800 text-slate-300 px-1.5 py-0.5 rounded font-bold">
+                            {activeMode === 'all' ? 'LIVE' : activeMode === 'social' ? 'SYNC' : activeMode === 'genius' ? 'CORE' : activeMode === 'perks' ? 'EARN' : 'OS'}
+                          </span>
+                          <p className="text-xs text-slate-400 leading-tight">
+                            {activeMode === 'all' && "Certified local hotspots."}
+                            {activeMode === 'social' && "Real-time friend coordinates."}
+                            {activeMode === 'genius' && "AI-curated spatial engine."}
+                            {activeMode === 'perks' && "Instant merchant cashback."}
+                            {activeMode === 'profile' && "Managed wallet telemetry."}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* CATEGORY FILTER - Horizontal Scrollable */}
+                    <div className="flex gap-2.5 overflow-x-auto pb-2 scrollbar-none">
+                      {['All', 'Coffee', 'Dining', 'Parks', 'Cultural', 'Shopping'].map((cat) => (
+                        <button
+                          key={cat}
+                          onClick={() => setSelectedCategory(cat)}
+                          className={cn(
+                            "px-5 py-2 rounded-full text-xs font-black uppercase tracking-widest transition-all border",
+                            selectedCategory === cat 
+                              ? "bg-rose-500 border-rose-500 text-white shadow-[0_0_15px_rgba(244,63,94,0.4)]" 
+                              : "bg-slate-800/50 border-slate-700/50 text-slate-400 hover:border-slate-600"
+                          )}
+                        >
+                          {cat}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* SPOTS DISCOVERY LIST - Unified Mock + Search results */}
+                    <div className="space-y-3 pt-4 border-t border-slate-800">
+                      <div className="flex justify-between items-center px-1">
+                        <h5 className="text-[10px] uppercase font-black tracking-widest text-slate-500">
+                          {activeCollection ? 'Collection Nodes' : (activeMode === 'all' ? 'Certified OS Nodes' : `${activeMode} Discovery`)}
+                        </h5>
+                        <span className="text-[9px] font-mono text-slate-600">{(filteredMockPlaces.length + filteredPlaces.length)} NODES</span>
+                      </div>
+                      
+                      {(filteredMockPlaces.length === 0 && filteredPlaces.length === 0) ? (
+                        <div className="py-8 text-center bg-slate-900/40 rounded-3xl border border-dashed border-slate-800">
+                          <MapPin className="w-6 h-6 text-slate-700 mx-auto mb-2 opacity-20" />
+                          <p className="text-[10px] text-slate-600 font-bold uppercase tracking-tight">No indexed nodes in this mode</p>
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          {/* Search Results Filter Chips */}
+                          {places.length > 0 && (
+                            <div className="flex gap-1.5 overflow-x-auto pb-2 pt-1 scrollbar-none">
+                              {[
+                                { id: 'all', label: 'All' },
+                                { id: 'nearby', label: 'Nearby (<3km)' },
+                                { id: 'high_rated', label: '★ 4.5+ Rated' },
+                                { id: 'open_now', label: 'Open Now' }
+                              ].map((f) => (
+                                <button
+                                  key={f.id}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    triggerHaptic('switch');
+                                    setSearchFilter(f.id as any);
+                                  }}
+                                  className={cn(
+                                    "px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all border shrink-0",
+                                    searchFilter === f.id 
+                                      ? "bg-rose-500 border-rose-500 text-white shadow-[0_0_10px_rgba(244,63,94,0.3)]"
+                                      : "bg-slate-900/60 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-white"
+                                  )}
+                                >
+                                  {f.label}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Search Results First (High Intent) */}
+                          {filteredPlaces.map((p, idx) => (
+                            <motion.div 
+                               initial={{ opacity: 0, y: 10 }}
+                               animate={{ opacity: 1, y: 0 }}
+                               transition={{ delay: idx * 0.04, duration: 0.3 }}
+                               key={`search-list-${p.id}`}
+                               onClick={() => {
+                                 triggerHaptic('open_panel');
+                                 handlePlaceClick(p);
+                               }}
+                               className="bg-slate-900/40 hover:bg-slate-800/60 border border-slate-800 rounded-2xl p-3 flex gap-3 cursor-pointer group transition-all"
+                            >
+                               <div className="w-10 h-10 rounded-xl bg-violet-600/10 border border-violet-500/20 flex items-center justify-center text-violet-400 shrink-0">
+                                 <Search className="w-5 h-5" />
+                               </div>
+                               <div className="flex-1 min-w-0">
+                                 <h6 className="text-[11px] font-black text-white uppercase tracking-tight truncate group-hover:text-rose-400 transition-colors">{p.displayName}</h6>
+                                 <p className="text-[9px] text-slate-500 truncate mt-0.5">{p.formattedAddress}</p>
+                               </div>
+                            </motion.div>
+                          ))}
+
+                          {/* Mock Curation (Atmospheric) */}
+                          {filteredMockPlaces.slice(0, 10).map((p, idx) => (
+                            <motion.div 
+                               initial={{ opacity: 0, y: 10 }}
+                               animate={{ opacity: 1, y: 0 }}
+                               transition={{ delay: (filteredPlaces.length + idx) * 0.04, duration: 0.3 }}
+                               key={`curr-list-spot-${p.id}`}
+                               onClick={() => {
+                                 triggerHaptic('open_panel');
+                                 handlePlaceClick(p);
+                               }}
+                               className="bg-slate-900/60 hover:bg-slate-800/60 border border-slate-800 rounded-2xl p-3 flex gap-3 cursor-pointer group transition-all"
+                            >
+                              <div className="w-14 h-14 rounded-xl overflow-hidden shrink-0 border border-white/5">
+                                <img src={p.imageUrl} alt="" className="w-full h-full object-cover grayscale-[0.2] transition-all" />
+                              </div>
+                              <div className="flex-1 min-w-0 py-0.5">
+                                <h6 className="text-[11px] font-black text-white uppercase tracking-tight truncate group-hover:text-rose-400 transition-colors">{p.displayName}</h6>
+                                <p className="text-[9px] text-slate-500 truncate mt-0.5 font-medium">{p.formattedAddress}</p>
+                                <div className="flex items-center gap-2 mt-1.5">
+                                  <div className="flex items-center gap-1 text-[9px] text-amber-400/80 font-bold">
+                                    ★ {p.rating}
+                                  </div>
+                                  {p.matchScore && <span className="text-[9px] font-mono text-emerald-400 bg-emerald-500/10 px-1 rounded">{p.matchScore}%</span>}
+                                </div>
+                              </div>
+                            </motion.div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* PROFILE / OS HUB LAYER */}
+                  <div className={cn(
+                    "space-y-6 transition-all duration-500",
+                    activeMode === 'profile' 
+                      ? "opacity-100 translate-y-0 pointer-events-auto" 
+                      : "opacity-0 translate-y-4 pointer-events-none absolute inset-x-4 top-4"
+                  )}>
+                    <div className="space-y-6">
+
+                      {/* OS Hub High-Fidelity Tab Selector Navigation */}
+                      <div className="flex bg-[#07090d]/90 p-1 rounded-2xl border border-slate-800 gap-1 backdrop-blur-md">
+                        {[
+                          { id: 'hub', label: 'Nodes & Core', icon: Layers },
+                          { id: 'diary', label: 'Diary', icon: BookOpen },
+                          { id: 'planner', label: 'Trip Planner', icon: Compass },
+                          { id: 'offline', label: 'Cache Control', icon: Download }
+                        ].map(tab => {
+                          const IconComp = tab.icon;
+                          const active = activeHubTab === tab.id;
+                          return (
+                            <button
+                              key={tab.id}
+                              type="button"
+                              onClick={() => {
+                                triggerHaptic('switch');
+                                setActiveHubTab(tab.id as any);
+                              }}
+                              className={cn(
+                                "flex-1 flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-xl text-[9px] font-black tracking-widest uppercase transition-all border",
+                                active 
+                                  ? "bg-rose-500 border-rose-500 text-white shadow-[0_4px_12px_rgba(244,63,94,0.3)]"
+                                  : "bg-transparent border-transparent text-slate-500 hover:text-slate-300 hover:bg-slate-900/40"
+                              )}
+                            >
+                              <IconComp className="w-3.5 h-3.5" />
+                              <span>{tab.label}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      {activeHubTab === 'hub' ? (
+                        <div className="space-y-6 animate-fadeIn">
+                          {/* CURATED COLLECTIONS - Moved to OS HUB Library */}
+                      <div className="space-y-3">
+                        <div className="flex items-center gap-2 px-1">
+                          <Layers className="w-4 h-4 text-rose-500" />
+                          <h5 className="text-[10px] uppercase font-black tracking-widest text-slate-400">Discovery Library</h5>
+                        </div>
+                        {CURATED_LISTS.map(list => (
+                          <div 
+                            key={list.id} 
+                            onClick={() => {
+                              triggerHaptic('tap');
+                              setActiveCollection(list.id);
+                              if (list.id === 'canada_working_holiday') {
+                                setActiveMode('canada');
+                                setMapCenter(CANADA_CENTER);
+                                setMapZoom(13.5);
+                              } else if (list.id === 'night_vision') {
+                                setMapTheme('Night');
+                                triggerFlyover(SEOUL_MOCK_PLACES[1]);
+                              } else {
+                                triggerFlyover(SEOUL_MOCK_PLACES[0]);
+                              }
+                              setShowList(true); // Open panel to show filtered spots
+                            }}
+                            className={cn(
+                              "p-4 rounded-2xl bg-[#111319]/80 border cursor-pointer group transition-all active:scale-95",
+                              activeCollection === list.id ? "border-rose-500/50 shadow-[0_0_20px_rgba(244,63,94,0.1)]" : "border-slate-800 hover:border-slate-700"
+                            )}
+                          >
+                            <div className="flex justify-between items-center">
+                              <div>
+                                <h6 className={cn(
+                                  "text-[11px] font-black uppercase tracking-tight transition-colors",
+                                  activeCollection === list.id ? "text-rose-400" : "text-white group-hover:text-rose-400"
+                                )}>{list.title}</h6>
+                                <p className="text-[9px] text-slate-500 mt-1 font-medium leading-relaxed">{list.description}</p>
+                              </div>
+                              <ChevronRight className={cn(
+                                "w-4 h-4 transition-all",
+                                activeCollection === list.id ? "text-rose-500" : "text-slate-700 group-hover:text-rose-500"
+                              )} />
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* OS HUB: SAVED PLACES & VOUCHERS INTEGRATION */}
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="p-4 rounded-3xl bg-slate-900 border border-slate-800 space-y-3">
+                           <div className="flex items-center gap-2">
+                             <Bookmark className="w-4 h-4 text-amber-500" />
+                             <span className="text-[10px] font-black uppercase text-slate-400">Bookmarks</span>
+                           </div>
+                           <div className="space-y-2 overflow-y-auto max-h-[160px] scrollbar-thin">
+                             {savedPlaces.length === 0 ? (
+                               <p className="text-[9px] text-slate-600 italic">No bookmarks indexed.</p>
+                             ) : (
+                               savedPlaces.map(p => (
+                                 <button 
+                                   key={p.id}
+                                   onClick={() => {
+                                     triggerHaptic('open_panel');
+                                     handlePlaceClick(p);
+                                   }}
+                                   className="w-full p-2 text-left bg-slate-800/40 rounded-xl hover:bg-slate-700/40 transition-colors group"
+                                 >
+                                   <p className="text-[10px] font-bold text-white truncate group-hover:text-rose-400">{p.displayName || p.name || 'Untitled Spot'}</p>
+                                   <p className="text-[8px] text-slate-500 truncate mt-0.5">{p.formattedAddress || 'Global Coordinate'}</p>
+                                 </button>
+                               ))
+                             )}
+                           </div>
+                        </div>
+
+                        <div className="p-4 rounded-3xl bg-slate-900 border border-slate-800 space-y-3">
+                           <div className="flex items-center gap-2">
+                             <Ticket className="w-4 h-4 text-emerald-500" />
+                             <span className="text-[10px] font-black uppercase text-slate-400">Tokens</span>
+                           </div>
+                           <div className="space-y-2 overflow-y-auto max-h-[160px] scrollbar-thin">
+                             {MOCK_COUPONS.map(c => (
+                               <button 
+                                 key={c.id}
+                                 onClick={() => {
+                                   triggerHaptic('open_panel');
+                                   // Coupons usually link to specific partners or categories
+                                   setSelectedCategory('Coffee');
+                                   setActiveMode('perks');
+                                   triggerFlyover(SEOUL_MOCK_PLACES[4]);
+                                 }}
+                                 className="w-full p-2 text-left bg-slate-800/40 rounded-xl hover:bg-emerald-500/10 transition-colors group"
+                               >
+                                 <p className="text-[10px] font-bold text-emerald-400">{c.benefit}</p>
+                                 <p className="text-[8px] text-slate-500 mt-0.5">{c.shopName}</p>
+                               </button>
+                             ))}
+                           </div>
+                        </div>
+                      </div>
+
+                      {/* VANTI TELEMETRY ANALYTICS DASHBOARD */}
+                      <AnalyticsDashboard savedPlaces={savedPlaces} trajectoryLength={trajectory.length} />
+
+                      {/* [PETPY DNA]: PlaceMe Background Records & EOD Movie */}
+                      <div className="p-5 rounded-3xl bg-gradient-to-br from-violet-950/20 to-slate-950 border border-violet-500/20 space-y-4">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2.5">
+                            <Activity className="w-4 h-4 text-violet-400" />
+                            <h3 className="text-sm font-black text-white uppercase tracking-tighter italic">PlaceMe Records</h3>
+                          </div>
+                          <button 
+                            onClick={() => {
+                                setIsRecording(!isRecording);
+                                triggerHaptic('switch');
+                            }}
+                            className={cn(
+                                "px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest transition-all",
+                                isRecording ? "bg-rose-500 text-white animate-pulse" : "bg-slate-800 text-slate-400"
+                            )}
+                          >
+                            {isRecording ? "● RECORDING" : "DISABLED"}
+                          </button>
+                        </div>
+                        
+                        <div className="space-y-2">
+                           <div className="flex justify-between text-[10px] text-slate-400 font-mono">
+                              <span>SENSORY LOGS</span>
+                              <span>{trajectory.length} NODES</span>
+                           </div>
+                           <div className="h-1 bg-slate-900 rounded-full overflow-hidden">
+                              <motion.div 
+                                className="h-full bg-violet-500" 
+                                initial={{ width: "0%" }}
+                                animate={{ width: `${Math.min(100, trajectory.length * 5)}%` }}
+                              />
+                           </div>
+                        </div>
+
+                        <button 
+                          onClick={simulateEodMovie}
+                          disabled={trajectory.length < 2}
+                          className="w-full py-3 bg-white text-black font-display text-xs font-black uppercase tracking-[0.1em] rounded-2xl hover:bg-violet-400 hover:text-white transition-all disabled:opacity-20 disabled:grayscale flex items-center justify-center gap-2 shadow-xl shadow-violet-500/10 active:scale-95"
+                        >
+                          <Video className="w-4 h-4" /> Generate EOD Cinematic Movie
+                        </button>
+                        <p className="text-[9px] text-slate-500 text-center leading-relaxed">
+                          펫피 산책 루프를 이식한 앰비언트 센싱 모드입니다. <br/>
+                          저녁 8시가 되면 오늘의 궤적을 3D 시네마틱 무비로 복개합니다.
+                        </p>
+                      </div>
+                      </div>
+                      ) : null}
+
+                      {/* Offline Map Downloader Segment */}
+                      {activeHubTab === 'offline' ? (
+                        <div className="p-4 rounded-xl bg-slate-900 border border-slate-800 space-y-3.5 shadow-inner animate-fadeIn">
+                          <div className="flex justify-between items-center">
+                            <h6 className="text-[10px] uppercase font-bold text-slate-400 tracking-wider flex items-center gap-1.5 font-sans">
+                              <Download className="w-3.5 h-3.5 text-rose-400 animate-pulse" /> Area Cache Node
+                            </h6>
+                            {isDownloading ? (
+                              <span className="text-[9px] font-mono font-bold text-rose-400 animate-pulse">
+                                SYNCING...
+                              </span>
+                            ) : downloadSuccess ? (
+                              <span className="text-[9px] font-mono font-bold text-emerald-400">
+                                CACHED
+                              </span>
+                            ) : null}
+                          </div>
+                          
+                          <button
+                            type="button"
+                            onClick={handleDownloadArea}
+                            disabled={isDownloading}
+                            className="w-full py-2.5 rounded-lg bg-white/5 hover:bg-white/10 active:bg-white/20 border border-white/10 text-white text-xs font-bold transition-all flex items-center justify-center gap-2"
+                          >
+                            {isDownloading ? <Loader2 className="w-4 h-4 animate-spin text-rose-400" /> : <Download className="w-4 h-4" />}
+                            {isDownloading ? 'Capturing Area...' : 'Download Current Bounds'}
+                          </button>
+
+                          {/* Beautiful Interactive Visual Progress Bar */}
+                          {isDownloading ? (
+                            <div className="space-y-2 pt-2 border-t border-slate-800/80">
+                              <div className="flex justify-between items-center text-[9px] font-mono">
+                                <span className="text-slate-400 font-medium uppercase">{downloadStage}</span>
+                                <span className="text-rose-400 font-extrabold">{downloadProgress}%</span>
+                              </div>
+                              <div className="h-1.5 w-full bg-slate-950 rounded-full overflow-hidden p-0.5 border border-slate-850">
+                                <motion.div 
+                                  className="h-full bg-rose-500 rounded-full" 
+                                  initial={{ width: "0%" }}
+                                  animate={{ width: `${downloadProgress}%` }}
+                                  transition={{ ease: "easeInOut" }}
+                                />
+                              </div>
+                              <div className="flex justify-between items-center text-[8px] text-slate-500 font-mono">
+                                <span>NET: 4.8 MB/s</span>
+                                <span>PAYLOAD: ~12.4 MB</span>
+                              </div>
+                            </div>
+                          ) : null}
+
+                          {downloadSuccess ? (
+                            <div className="p-2.5 bg-emerald-950/25 border border-emerald-500/20 rounded-xl text-center">
+                              <span className="text-[9px] font-mono font-bold text-emerald-400 uppercase tracking-wider block">
+                                ✓ Cache Sync Successful
+                              </span>
+                              <span className="text-[8px] text-slate-500 block mt-0.5">
+                                100% vector tiles and active viewport POI nodes stored locally.
+                              </span>
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
+
+                      {activeHubTab === 'hub' ? (
+                        <div className="space-y-6 animate-fadeIn">
+                          {/* VPay wallet widget */}
+                      <div className="p-5 rounded-2xl bg-gradient-to-br from-violet-600 via-indigo-700 to-indigo-900 text-white shadow-xl flex flex-col justify-between h-40 border border-violet-500/30 relative overflow-hidden">
+                        <div className="absolute right-[-10px] bottom-[-20px] opacity-15">
+                          <Wallet className="w-32 h-32" />
+                        </div>
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <p className="text-[9px] uppercase tracking-widest font-black text-violet-200">VANTi Pay Node</p>
+                            <h5 className="text-sm font-semibold mt-1">Premium Digital Wallet</h5>
+                          </div>
+                          <div className="px-2 py-0.5 bg-white/20 backdrop-blur-md rounded text-[9px] uppercase tracking-wider font-extrabold">Active</div>
+                        </div>
+                        <div>
+                          <p className="text-[10px] text-violet-200">Direct Token balance</p>
+                          <div className="flex items-baseline gap-1 mt-1">
+                            <span className="text-2xl font-display font-black">124,500</span>
+                            <span className="text-xs font-semibold text-violet-300">VP</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* OS Diagnostics & Telemetry (GNB 6 Core Upgrade) */}
+                      <div className="p-4 rounded-xl bg-slate-950/80 border border-slate-800 space-y-3 shadow-inner">
+                        <div className="flex justify-between items-center border-b border-slate-800 pb-2">
+                          <h6 className="text-[10px] uppercase font-bold text-slate-400 tracking-wider flex items-center gap-1.5">
+                            <Activity className="w-3.5 h-3.5 text-indigo-400 animate-pulse" /> OS Node Telemetry
+                          </h6>
+                          <span className="text-[9px] font-mono font-bold text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20 uppercase tracking-widest">
+                            STABLE
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 text-xs">
+                          <div className="p-2 rounded bg-[#111319]/80 border border-slate-900 flex flex-col">
+                            <span className="text-[9px] text-slate-500 uppercase font-bold">Network Ping</span>
+                            <span className="font-mono text-white font-extrabold flex items-center gap-1 mt-0.5">
+                              <Wifi className="w-3.5 h-3.5 text-emerald-400" /> {pingLatency} ms
+                            </span>
+                          </div>
+                          <div className="p-2 rounded bg-[#111319]/80 border border-slate-900 flex flex-col">
+                            <span className="text-[9px] text-slate-550 uppercase font-bold">Memory Cache</span>
+                            <span className="font-mono text-white font-extrabold flex items-center gap-1 mt-0.5">
+                              <Box className="w-3.5 h-3.5 text-indigo-400" /> 42.4 MB
+                            </span>
+                          </div>
+                          <div className="p-2 rounded bg-[#111319]/80 border border-slate-900 flex flex-col col-span-2">
+                            <div className="flex justify-between text-[9px] text-slate-500 font-bold uppercase mb-1">
+                              <span className="flex items-center gap-1"><Battery className="w-3.5 h-3.5 text-blue-400" /> System Charge</span>
+                              <span className="font-mono text-blue-400">88%</span>
+                            </div>
+                            <div className="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
+                              <div className="bg-gradient-to-r from-blue-500 to-indigo-500 h-full rounded-full" style={{ width: '88%' }} />
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Saves Counters widget info */}
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="p-4 rounded-xl bg-[#141720]/80 border border-slate-800 text-center">
+                          <h6 className="text-[9px] uppercase tracking-wider font-black text-slate-500">Saved Places</h6>
+                          <p className="text-xl font-display font-extrabold text-white mt-1">{savedPlaces.length}</p>
+                        </div>
+                        <div className="p-4 rounded-xl bg-[#141720]/80 border border-slate-800 text-center">
+                          <h6 className="text-[9px] uppercase tracking-wider font-black text-slate-500">Active Vouchers</h6>
+                          <p className="text-xl font-display font-extrabold text-emerald-400 mt-1">{MOCK_COUPONS.length}</p>
+                        </div>
+                      </div>
+
+                      {/* Interactive scratch card widget (Merged from Perks) */}
+                      <div className="p-4.5 rounded-2xl bg-[#141720]/90 border border-slate-800 space-y-3.5 relative overflow-hidden">
+                        <div className="flex justify-between items-center">
+                          <span className="text-[9px] font-black uppercase text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20 tracking-wider">
+                            🎰 Weekly Lucky Draw
+                          </span>
+                          <span className="text-[9px] text-slate-500 font-mono">1/1 Active</span>
+                        </div>
+                        <div className="space-y-1">
+                          <h6 className="text-sm font-bold text-white">Mystery Coffee Voucher</h6>
+                          <p className="text-[11px] text-slate-400">Tap the silver hologram sticker below to scratch and claim your free morning brew code.</p>
+                        </div>
+
+                        {/* Foil block */}
+                        <div className="relative h-16 rounded-xl overflow-hidden cursor-pointer select-none">
+                          <AnimatePresence mode="wait">
+                            {!scratchedCoupons.includes('mystery_brew') ? (
+                              <motion.div
+                                key="foil"
+                                exit={{ opacity: 0, scale: 0.95 }}
+                                transition={{ duration: 0.4 }}
+                                onClick={() => {
+                                  triggerHaptic('impact');
+                                  setScratchedCoupons(prev => [...prev, 'mystery_brew']);
+                                }}
+                                className="absolute inset-0 bg-gradient-to-tr from-slate-400 via-slate-300 to-slate-500 flex items-center justify-center border border-white/25 shadow-inner"
+                              >
+                                <div className="text-center">
+                                  <span className="font-mono text-[10px] text-slate-700 font-black tracking-widest uppercase flex items-center gap-1.5 justify-center">
+                                    ✨ TAP HERE TO SCRATCH ✨
+                                  </span>
+                                  <span className="text-[8px] text-slate-600 block mt-0.5">Vanti Cryptographic Hologram Layer</span>
+                                </div>
+                              </motion.div>
+                            ) : (
+                              <motion.div
+                                key="reveal"
+                                initial={{ opacity: 0, scale: 1.05 }}
+                                animate={{ opacity: 1, scale: 1 }}
+                                className="absolute inset-0 bg-gradient-to-tr from-emerald-950 to-slate-950 flex items-center justify-between px-4 border border-emerald-500/20 rounded-xl"
+                              >
+                                <div className="space-y-0.5">
+                                  <span className="text-[8px] text-emerald-400 font-bold uppercase tracking-wider block">Scratch Revealed!</span>
+                                  <h6 className="text-xs text-white font-bold">1 Free Premium Flat White</h6>
+                                </div>
+                                <div className="px-3 py-1 bg-emerald-500/20 border border-emerald-400/30 text-emerald-400 font-mono text-xs font-black select-all rounded-lg uppercase tracking-wider animate-pulse shadow-[0_0_15px_rgba(16,185,129,0.2)]">
+                                  BREW-NEON-VANTI
+                                </div>
+                              </motion.div>
+                            )}
+                          </AnimatePresence>
+                        </div>
+                      </div>
+
+                      {/* Active Vouchers items list inside Profile */}
+                      <div>
+                        <h5 className="text-xs font-black uppercase text-slate-400 tracking-wider mb-2 flex items-center gap-1.5">
+                          <Ticket className="w-4 h-4 text-emerald-400" /> My Reward Vouchers
+                        </h5>
+                        <div className="space-y-2">
+                          {MOCK_COUPONS.map((co) => (
+                            <div 
+                              key={co.id} 
+                              onClick={() => {
+                                triggerHaptic('open_panel');
+                                // Deep link merchant to mock place
+                                const place = SEOUL_MOCK_PLACES.find(p => p.displayName.includes(co.shopName) || co.shopName.includes(p.displayName));
+                                if (place) {
+                                  handlePlaceClick(place);
+                                } else {
+                                  setSelectedCategory('Dining');
+                                  triggerFlyover(SEOUL_MOCK_PLACES[0]);
+                                }
+                              }}
+                              className="p-3.5 rounded-xl bg-slate-900 border border-slate-800 flex justify-between items-center bg-[#111319]/80 cursor-pointer hover:border-emerald-500/30 transition-all active:scale-[0.98]"
+                            >
+                              <div>
+                                <h6 className="text-xs text-white font-bold max-w-[170px] truncate">{co.shopName}</h6>
+                                <p className="text-[11px] text-emerald-400 mt-0.5">{co.benefit}</p>
+                              </div>
+                              <div className="border border-emerald-500/30 bg-emerald-500/10 text-emerald-400 px-2.5 py-1 rounded-lg font-mono text-[10px] font-bold select-all">
+                                {co.code}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                      </div>
+                      ) : null}
+
+                      {/* Downloaded Offline Map Areas list */}
+                      {activeHubTab === 'offline' ? (
+                        <div className="space-y-4 animate-fadeIn">
+                          <h5 className="text-xs font-black uppercase text-slate-400 tracking-wider mb-2 flex items-center gap-1.5 mt-6">
+                            <Download className="w-4 h-4 text-blue-400 animate-pulse" /> Cache Control Register
+                          </h5>
+                          {offlineAreas.length === 0 ? (
+                            <div className="p-4 rounded-xl border border-dashed border-slate-700 text-center">
+                              <p className="text-xs text-slate-500 uppercase font-mono">No offline areas cached</p>
+                            </div>
+                          ) : (
+                            <div className="space-y-2">
+                              {offlineAreas.map((area) => (
+                                <div key={area.id} className="p-3.5 rounded-xl bg-slate-900 border border-slate-800 bg-[#111319]/85 flex flex-col gap-2 relative overflow-hidden group hover:border-blue-500/20 transition-all">
+                                  <div className="flex justify-between items-center">
+                                    {editingAreaId === area.id ? (
+                                      <input 
+                                        type="text" 
+                                        value={editingAreaName}
+                                        onChange={(e) => setEditingAreaName(e.target.value)}
+                                        className="bg-slate-800 text-white text-xs px-2 py-1 rounded-md flex-1 mr-2 outline-none border border-blue-500/50 font-mono"
+                                        autoFocus
+                                        onKeyDown={async (e) => {
+                                          if (e.key === 'Enter') {
+                                            triggerHaptic('tap');
+                                            await renameOfflineArea(area.id, editingAreaName);
+                                            setEditingAreaId(null);
+                                            setOfflineAreas(await getOfflineAreas());
+                                          }
+                                        }}
+                                        onBlur={async () => {
+                                          triggerHaptic('tap');
+                                          await renameOfflineArea(area.id, editingAreaName);
+                                          setEditingAreaId(null);
+                                          setOfflineAreas(await getOfflineAreas());
+                                        }}
+                                      />
+                                    ) : (
+                                      <h6 
+                                        className="text-xs text-white font-mono font-bold cursor-text hover:text-blue-300 transition-colors"
+                                        onClick={() => {
+                                          triggerHaptic('tap');
+                                          setEditingAreaId(area.id);
+                                          setEditingAreaName(area.name);
+                                        }}
+                                      >
+                                        {area.name}
+                                      </h6>
+                                    )}
+                                    <button 
+                                      type="button"
+                                      className="p-1 text-slate-500 hover:text-red-400 transition-colors"
+                                      onClick={async () => {
+                                        triggerHaptic('tap');
+                                        await deleteOfflineArea(area.id);
+                                        setOfflineAreas(await getOfflineAreas());
+                                      }}
+                                    >
+                                      <X className="w-4 h-4" />
+                                    </button>
+                                  </div>
+                                  <div className="flex justify-between items-end text-[10px] text-slate-500 font-mono">
+                                    <span>{new Date(area.savedAt).toLocaleDateString()}</span>
+                                    <span>{area.places?.length || 0} Places</span>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ) : null}
+
+                      {/* HIGH FIDELITY TRIP PLANNER TAB */}
+                      {activeHubTab === 'planner' ? (
+                        <div className="animate-fadeIn">
+                          <TripPlannerTab 
+                            map={map}
+                            savedPlaces={savedPlaces}
+                            userLocation={userLocation}
+                            triggerHaptic={(ty: any) => triggerHaptic(ty === 'heavy' ? 'impact' : ty)}
+                            onFocusCoordinates={(lat, lng) => {
+                              if (map) {
+                                map.panTo({ lat, lng });
+                                map.setZoom(16.5);
+                              }
+                            }}
+                          />
+                        </div>
+                      ) : null}
+
+                      {/* IMMERSIVE TRAVEL DIARY SOCIAL TAB */}
+                      {activeHubTab === 'diary' ? (
+                        <TravelDiary
+                          user={user}
+                          selectedPlace={selectedPlace}
+                          userLocation={userLocation}
+                          language={language}
+                          onClose={() => {
+                             setActiveMode('all');
+                             triggerHaptic('close');
+                          }}
+                          onRecenter={(lat, lng) => {
+                            if (map) {
+                              map.panTo({ lat, lng });
+                              map.setZoom(14.5);
+                            }
+                          }}
+                        />
+                      ) : null}
+
+                    </div>
+                  </div>
+
+                  {/* SOCIAL ACTIVITY LAYER */}
+                  <div className={cn(
+                    "space-y-4 transition-all duration-500",
+                    activeMode === 'social' 
+                      ? "opacity-100 translate-y-0 pointer-events-auto" 
+                      : "opacity-0 translate-y-4 pointer-events-none absolute inset-x-4 top-4"
+                  )}>
+                    <div className="space-y-4">
+                      {/* Active friends scrolling */}
+                      <div>
+                        <h5 className="text-[10px] uppercase font-bold tracking-wider text-slate-500 mb-2.5">Live Local Friends</h5>
+                        <div className="flex gap-2.5 overflow-x-auto pb-1.5 scrollbar-thin">
+                          {MOCK_FRIENDS.map((f) => (
+                            <div 
+                              key={f.id}
+                              onClick={() => {
+                                triggerHaptic('open_panel');
+                                setSelectedPlace({
+                                  id: f.id,
+                                  displayName: f.name,
+                                  formattedAddress: `Active near ${f.activeLocation}`,
+                                  lat: f.lat,
+                                  lng: f.lng,
+                                  types: ['friend_marker'],
+                                  imageUrl: f.avatar,
+                                  socialActivity: `Status: Checked-in at ${f.activeLocation} (${f.lastActive})`,
+                                  mode: 'social'
+                                });
+                              }}
+                              className="flex flex-col items-center shrink-0 w-20 text-center cursor-pointer"
+                            >
+                              <div className="w-12 h-12 rounded-full border-2 border-rose-500 p-0.5 bg-slate-900 hover:scale-105 transition-transform">
+                                <img src={f.avatar} alt={f.name} className="w-full h-full rounded-full object-cover" />
+                              </div>
+                              <span className="text-[10px] text-slate-200 mt-1.5 truncate w-16 leading-tight">{f.name.split(' ')[0]}</span>
+                              <span className="text-[8px] text-rose-400 tracking-tight font-extrabold mt-0.5 uppercase">{f.lastActive}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* AI Rendezvous Centerpoint Widget */}
+                      <div className="p-4 rounded-2xl bg-gradient-to-br from-rose-950/40 to-slate-950 border border-rose-500/10 space-y-3.5 shadow-md">
+                        <div className="flex justify-between items-center">
+                          <span className="text-[9px] font-black uppercase text-rose-400 bg-rose-500/10 px-1.5 py-0.5 rounded border border-rose-500/20 tracking-wider">
+                            ⚡ AI Rendezvous
+                          </span>
+                        </div>
+                        <h6 className="text-[13px] font-bold text-white leading-tight">Optimal Social Hub Solver</h6>
+                        <button
+                          onClick={() => {
+                            if (MOCK_FRIENDS.length > 0) {
+                              triggerHaptic('mode3d');
+                              let totalLat = 0, totalLng = 0;
+                              MOCK_FRIENDS.forEach(f => { totalLat += f.lat; totalLng += f.lng; });
+                              const avgLat = totalLat / MOCK_FRIENDS.length;
+                              const avgLng = totalLng / MOCK_FRIENDS.length;
+                              if (map) { map.panTo({ lat: avgLat, lng: avgLng }); map.setZoom(15); }
+                              setSocialMeetpoint({ lat: avgLat, lng: avgLng, name: "AI Rendezvous Midpoint" });
+                            }
+                          }}
+                          className="w-full py-2 bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold rounded-xl transition-all shadow-md flex items-center justify-center gap-1.5"
+                        >
+                          <Navigation className="w-3.5 h-3.5" /> Balance Locations
+                        </button>
+                        {socialMeetpoint && (
+                          <div className="p-3 bg-rose-950/20 border border-rose-500/20 rounded-xl">
+                            <p className="text-[10px] text-white font-bold">{socialMeetpoint.name}</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* GENIUS / AI LAYER */}
+                  <div className={cn(
+                    "space-y-4 transition-all duration-500",
+                    activeMode === 'genius' 
+                      ? "opacity-100 translate-y-0 pointer-events-auto" 
+                      : "opacity-0 translate-y-4 pointer-events-none absolute inset-x-4 top-4"
+                  )}>
+                    {/* WEATHER-AWARE ROUTE OPTIMIZATION MODULE */}
+                    <WeatherRouteOptimizer
+                      userLocation={userLocation}
+                      selectedPlace={selectedPlace}
+                      activeWeather={activeWeather}
+                      triggerHaptic={triggerHaptic}
+                      onFocusCoordinates={(lat, lng) => {
+                        if (map) {
+                          map.panTo({ lat, lng });
+                          map.setZoom(16);
+                        }
+                      }}
+                    />
+
+                    <div className="p-4.5 rounded-2xl bg-gradient-to-br from-amber-950/20 to-slate-950 border border-amber-500/15 space-y-4 shadow-inner">
+                      <div className="flex justify-between items-center">
+                        <span className="text-[9px] font-black uppercase text-amber-500 bg-amber-500/10 px-1.5 py-0.5 rounded tracking-wider">Omnia AI Curation</span>
+                      </div>
+                      <button
+                        onClick={() => {
+                          triggerHaptic('switch');
+                          setIsQuantumScanning(true);
+                          setQuantumScannerLogs(["[SYS] ANALYZING SPATIAL INTENT..."]);
+                          setTimeout(() => { setIsQuantumScanning(false); triggerFlyover(CANADA_MOCK_PLACES[0]); }, 1500);
+                        }}
+                        className="w-full py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black uppercase rounded-xl shadow-md flex items-center justify-center gap-2"
+                      >
+                        <Sparkles className="w-4 h-4" /> Start Quantum Scan
+                      </button>
+                    </div>
+                  </div>
+
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </motion.div>
+      )}
+    </AnimatePresence>
+
+    <AnimatePresence>
+      {isAROpen && (
+        <ARView 
+          places={filteredMockPlaces}
+          friends={visibleFriends}
+          userLocation={userLocation}
+          onClose={() => setIsAROpen(false)}
+          onSelectPlace={handlePlaceClick}
+        />
+      )}
+    </AnimatePresence>
+
+    <MobileControlDrawer 
+        isOpen={showControls}
+        onClose={() => setShowControls(false)}
+        onDownload={handleDownloadArea}
+        isDownloading={isDownloading}
+        isPowerEfficiencyEnabled={isPowerEfficiencyEnabled}
+        onTogglePowerEfficiency={() => setIsPowerEfficiencyEnabled(!isPowerEfficiencyEnabled)}
+        onToggleMapType={() => {
+            setMapType(prev => {
+              if (prev === 'roadmap') return 'satellite';
+              if (prev === 'satellite') return 'hybrid';
+              return 'roadmap';
+            });
+        }}
+        setMapTheme={setMapTheme}
+        onTogglePois={() => {
+            triggerHaptic('switch');
+            setShowPois(!showPois);
+        }}
+        onToggle3D={() => {
+            triggerHaptic('switch');
+            const newState = !is3DActive;
+            setIs3DActive(newState);
+            if (map) {
+                map.moveCamera({
+                    tilt: newState ? 67.5 : 0,
+                    heading: (map.getHeading() || 0) + (newState ? 25 : -25),
+                    zoom: Math.max(map.getZoom() || 17, newState ? 17.5 : 15),
+                });
+            }
+        }}
+        onToggleTerrain={() => {
+            triggerHaptic('switch');
+            setIsTerrainActive(!isTerrainActive);
+        }}
+        onToggleFlightMode={() => {
+            triggerHaptic('mode3d');
+            const newState = !isFlightMode;
+            setIsFlightMode(newState);
+            if (newState && map) {
+                map.setTilt(65);
+                map.setZoom(17);
+            }
+        }}
+        showPois={showPois}
+        is3DActive={is3DActive}
+        isTerrainActive={isTerrainActive}
+        isFlightMode={isFlightMode}
+        currentMapType={mapType}
+        currentTheme={mapTheme}
+        themeOverride={themeOverride}
+        onThemeOverrideChange={setThemeOverride}
+        onOpenSettings={() => setShowSettingsModal(true)}
+        recentSearches={recentSearches}
+    />
+
+    <SettingsModal
+      isOpen={showSettingsModal}
+      onClose={() => setShowSettingsModal(false)}
+      user={user}
+      setMapType={setMapType}
+      onOpenDeveloperInsights={() => {
+        triggerHaptic('switch');
+        setIsDeveloperInsightsOpen(true);
+      }}
+    />
+
+    <MapLegend
+      activeWeather={activeWeather}
+      showTraffic={showTrafficLayer}
+      showPins={showPinsLayer}
+    />
+
+    <DeveloperInsights
+      isOpen={isDeveloperInsightsOpen}
+      onClose={() => setIsDeveloperInsightsOpen(false)}
+      stats={{
+        diaryEntryCount: diaryCount,
+        savedPlaceCount: savedPlaces.length,
+        offlineRegionCount: offlineAreas.length,
+        searchHistoryCount: user ? recentSearches.length : localRecentSearches.length
+      }}
+    />
+
+    {/* Quick-Save Bookmark Status Toast */}
+    <AnimatePresence>
+      {quickSaveStatus.status !== 'idle' && (
+        <motion.div
+          initial={{ opacity: 0, y: -50, scale: 0.95 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          exit={{ opacity: 0, y: -20, scale: 0.95 }}
+          className="fixed top-24 left-1/2 -translate-x-1/2 z-[9999] max-w-sm w-11/12 bg-slate-950/95 backdrop-blur-md border border-indigo-500/30 p-4 rounded-3xl shadow-2xl shadow-indigo-950/40 flex items-center gap-3 pointer-events-auto"
+        >
+          {quickSaveStatus.status === 'saving' && (
+            <Loader2 className="w-5 h-5 text-indigo-400 animate-spin shrink-0" />
+          )}
+          {quickSaveStatus.status === 'success' && (
+            <div className="w-5 h-5 rounded-full bg-emerald-500/10 border border-emerald-500 text-emerald-400 flex items-center justify-center shrink-0">
+              <Check className="w-3.5 h-3.5" />
+            </div>
+          )}
+          {quickSaveStatus.status === 'error' && (
+            <div className="w-5 h-5 rounded-full bg-rose-500/10 border border-rose-500 text-rose-450 text-rose-400 flex items-center justify-center shrink-0">
+              <AlertCircle className="w-3.5 h-3.5" />
+            </div>
+          )}
+          <div className="min-w-0 flex-1">
+            <span className="text-[8px] font-mono tracking-widest text-slate-500 uppercase font-black block leading-none">
+              {quickSaveStatus.status === 'saving' ? 'GEOLOCATING & PINNING' : quickSaveStatus.status === 'success' ? 'BOOKMARKED SUCCESSFULLY' : 'PIN ERROR'}
+            </span>
+            <p className="text-[10px] text-slate-300 font-extrabold mt-1 break-words leading-snug">
+              {quickSaveStatus.message}
+            </p>
+            {quickSaveStatus.locationName && (
+              <p className="text-[8px] text-indigo-400 font-black font-mono mt-0.5 truncate uppercase">
+                📍 {quickSaveStatus.locationName}
+              </p>
+            )}
+          </div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+
+    {/* Immersive Sci-Fi Map-Style HUD Transition Overlay */}
+    <AnimatePresence>
+      {isTransitioningStyle && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.3 }}
+          className="fixed inset-0 w-full h-full z-[9999] pointer-events-none flex flex-col items-center justify-center bg-[#070913]/75 backdrop-blur-[6px] overflow-hidden"
+        >
+          {/* Grid Line Visualizers */}
+          <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.02)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.02)_1px,transparent_1px)] bg-[size:40px_40px] [mask-image:radial-gradient(ellipse_60%_50%_at_50%_50%,#000_70%,transparent_100%)] opacity-80" />
+
+          {/* Glowing Orbs in Background */}
+          <div className={cn(
+            "absolute w-[450px] h-[450px] rounded-full filter blur-[120px] opacity-20 mix-blend-screen animate-pulse pointer-events-none transition-colors duration-500",
+            transitionTargetStyle === 'satellite' ? 'bg-cyan-500/20' : 'bg-emerald-500/20'
+          )} />
+
+          {/* Scanner concentric system */}
+          <div className="relative flex items-center justify-center w-80 h-80">
+            
+            {/* Outer Circular Tech Frame */}
+            <motion.div
+              initial={{ rotate: 0 }}
+              animate={{ rotate: 360 }}
+              transition={{ repeat: Infinity, duration: 15, ease: "linear" }}
+              className={cn(
+                "absolute inset-0 rounded-full border-2 border-dashed opacity-45",
+                transitionTargetStyle === 'satellite' ? 'border-cyan-500/30' : 'border-emerald-500/30'
+              )}
+            />
+
+            {/* Inner Circular Frame with Ticking Motion */}
+            <motion.div
+              initial={{ rotate: 360 }}
+              animate={{ rotate: 0 }}
+              transition={{ repeat: Infinity, duration: 8, ease: "linear" }}
+              className={cn(
+                "absolute w-64 h-64 rounded-full border border-double p-1 opacity-60",
+                transitionTargetStyle === 'satellite' ? 'border-cyan-400/40' : 'border-emerald-400/40'
+              )}
+            >
+              <div className={cn(
+                "w-full h-full rounded-full border border-dashed",
+                transitionTargetStyle === 'satellite' ? 'border-cyan-400/25' : 'border-emerald-400/25'
+              )} />
+            </motion.div>
+
+            {/* Central Target Reticle */}
+            <div className="relative flex items-center justify-center">
+              {/* Horizontal & Vertical Crosshairs */}
+              <div className={cn( "absolute w-28 h-[1px] opacity-50", transitionTargetStyle === 'satellite' ? 'bg-cyan-500/40' : 'bg-emerald-500/40' )} />
+              <div className={cn( "absolute h-28 w-[1px] opacity-50", transitionTargetStyle === 'satellite' ? 'bg-cyan-500/40' : 'bg-emerald-500/40' )} />
+              
+              {/* Center Core Pulsing Glow */}
+              <motion.div
+                animate={{ scale: [1, 1.25, 1] }}
+                transition={{ repeat: Infinity, duration: 1.2, ease: "easeInOut" }}
+                className={cn(
+                  "w-4.5 h-4.5 rounded-full shadow-[0_0_20px_rgba(34,211,238,0.7)]",
+                  transitionTargetStyle === 'satellite' ? 'bg-cyan-400 shadow-cyan-400/70' : 'bg-emerald-400 shadow-emerald-400/70'
+                )}
+              />
+            </div>
+
+            {/* Futuristic corners surrounding the frame */}
+            <div className={cn("absolute -top-4 -left-4 w-6 h-6 border-t-2 border-l-2 transition-all", transitionTargetStyle === 'satellite' ? 'border-cyan-400' : 'border-emerald-400')} />
+            <div className={cn("absolute -top-4 -right-4 w-6 h-6 border-t-2 border-r-2 transition-all", transitionTargetStyle === 'satellite' ? 'border-cyan-400' : 'border-emerald-400')} />
+            <div className={cn("absolute -bottom-4 -left-4 w-6 h-6 border-b-2 border-l-2 transition-all", transitionTargetStyle === 'satellite' ? 'border-cyan-400' : 'border-emerald-400')} />
+            <div className={cn("absolute -bottom-4 -right-4 w-6 h-6 border-b-2 border-r-2 transition-all", transitionTargetStyle === 'satellite' ? 'border-cyan-400' : 'border-emerald-400')} />
+
+            {/* Vertical Laser Scanline Sweep */}
+            <motion.div
+              initial={{ translateY: -170 }}
+              animate={{ translateY: 170 }}
+              transition={{ repeat: Infinity, repeatType: "reverse", duration: 1.2, ease: "easeInOut" }}
+              className={cn(
+                "absolute left-4 right-4 h-[2.5px] opacity-90 shadow-[0_0_12px_4px_rgba(6,182,212,0.6)]",
+                transitionTargetStyle === 'satellite' 
+                  ? 'bg-cyan-400 shadow-cyan-400/50' 
+                  : 'bg-emerald-400 shadow-emerald-400/50'
+              )}
+            />
+          </div>
+
+          {/* Calibrator Text System */}
+          <div className="mt-12 text-center select-none z-10">
+            <div className="flex items-center justify-center gap-2 mb-2">
+              {transitionTargetStyle === 'satellite' ? (
+                <Globe className="w-4 h-4 text-cyan-400 animate-[spin_8s_linear_infinite]" />
+              ) : (
+                <Layers className="w-4 h-4 text-emerald-400 animate-pulse" />
+              )}
+              <span className={cn(
+                "font-mono text-[9px] font-black uppercase tracking-[0.25em] bg-clip-text text-transparent bg-gradient-to-r",
+                transitionTargetStyle === 'satellite' 
+                  ? 'from-cyan-100 to-cyan-400' 
+                  : 'from-emerald-100 to-emerald-400'
+              )}>
+                {transitionTargetStyle === 'satellite' ? 'VANTI ORBITAL LINK' : 'VANTI VECTOR SYSTEM'}
+              </span>
+            </div>
+            
+            <h2 className="text-white text-md font-black uppercase tracking-wider font-mono">
+              {transitionTargetStyle === 'satellite' ? 'synchronizing orbital grid' : 'recompiling core geometry'}
+            </h2>
+
+            {/* Small telemetry detailed stats */}
+            <div className="mt-4 flex flex-col gap-1.5 items-center font-mono text-[8px] text-slate-500 font-bold uppercase tracking-widest leading-none bg-black/50 py-3 px-6 rounded-2xl border border-white/5 shadow-2xl">
+              <div className="flex items-center gap-3">
+                <span>LAT: {mapCenter.lat.toFixed(5)}</span>
+                <span className="w-1 h-1 rounded-full bg-slate-700" />
+                <span>LNG: {mapCenter.lng.toFixed(5)}</span>
+              </div>
+              <div className="mt-1.5 text-rose-500/90 animate-pulse flex items-center gap-1">
+                <Activity className="w-3.5 h-3.5 text-rose-500" />
+                <span>ACTIVE CALIBRATION ({Math.floor(mapZoom * (100 / 21))}% SCAN LEVEL)</span>
+              </div>
+            </div>
+          </div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+
+    </motion.div>
+  </div>
+);
+});
+
+export default VantiMap;

@@ -1,0 +1,1325 @@
+import React, { useEffect, useState, useRef } from 'react';
+import { ArrowLeft, MapPin, Star, Phone, Globe, Clock, Navigation, Sparkles, Bookmark, UserCircle, Share2, Award, Zap, X, Calendar, Compass, Eye, Info, Sliders, ThumbsUp, ThumbsDown, Volume2, Timer, ChevronDown, ChevronUp, ChevronRight, Check, Loader2, Plus } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
+import FocusLock from 'react-focus-lock';
+import { cn } from '../lib/utils';
+import { useMapsLibrary } from '@vis.gl/react-google-maps';
+import { User } from 'firebase/auth';
+import { doc, getDoc, setDoc, deleteDoc } from 'firebase/firestore';
+import { db } from '../lib/firebase';
+import * as d3 from 'd3';
+import { useVantiStore } from '../store/vantiStore';
+import { Skeleton, SkeletonCircle, SkeletonText } from './common/Skeleton';
+import { SpeakButton } from './common/SpeakButton';
+
+const TaskListItem = ({ loc, key }: { loc: string; key?: any }) => {
+  const [done, setDone] = useState(false);
+  return (
+    <label className={cn("flex items-start gap-2.5 cursor-pointer p-3 rounded-lg transition-colors border select-none group focus-within:ring-2 focus-within:ring-indigo-500", done ? "bg-indigo-500/10 border-indigo-500/20 shadow-[0_0_15px_rgba(99,102,241,0.1)]" : "bg-slate-900/60 border-slate-700/50 hover:bg-slate-800")}>
+      <input type="checkbox" className="sr-only" checked={done} onChange={() => setDone(!done)} />
+      <div className={cn("mt-0.5 w-5 h-5 rounded flex items-center justify-center shrink-0 border transition-all", done ? "bg-indigo-500 border-indigo-500 text-white shadow-[0_0_10px_rgba(99,102,241,0.4)]" : "bg-slate-950 border-slate-600 group-hover:border-indigo-400")}>
+        {done && <Check className="w-3.5 h-3.5" strokeWidth={3} />}
+      </div>
+      <span className={cn("text-xs font-sans leading-relaxed transition-all", done ? "line-through text-slate-500" : "text-slate-200")}>{loc}</span>
+    </label>
+  );
+};
+
+interface PlaceDetailsPanelProps {
+  key?: React.Key;
+  place: any; // Can be Google Place or MockPlace
+  onBack: () => void;
+  onClose?: () => void;
+  onShowRoute?: () => void;
+  onSetRoutingOrigin?: () => void;
+  isRoutingOrigin?: boolean;
+  user: User | null;
+  weather?: string | null;
+}
+
+// Sparkline component that uses D3.js to render a tiny popularity trend over the last 6 hours
+function TinySparkline({ seedName, refreshTriggers = 0 }: { seedName: string; refreshTriggers?: number }) {
+  const containerRef = useRef<SVGSVGElement | null>(null);
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const svg = d3.select(containerRef.current);
+    svg.selectAll('*').remove();
+
+    // Generate 6 repeatable points based on characters, perturbed slightly by manual refreshTriggers count
+    const points: number[] = [];
+    let seed = seedName.charCodeAt(0) || 7;
+    for (let i = 0; i < 6; i++) {
+      seed = (seed * 17 + 23) % 100;
+      const variance = refreshTriggers > 0 ? (Math.sin(refreshTriggers * 1.5 + i) * 15) : 0;
+      points.push(Math.min(95, Math.max(10, 15 + (seed % 65) + variance))); 
+    }
+
+    const width = 60;
+    const height = 14;
+    const margin = { top: 2, right: 2, bottom: 2, left: 2 };
+
+    const xScale = d3.scaleLinear()
+      .domain([0, 5])
+      .range([margin.left, width - margin.right]);
+
+    const yScale = d3.scaleLinear()
+      .domain([0, 100])
+      .range([height - margin.bottom, margin.top]);
+
+    const lineGen = d3.line<number>()
+      .x((_, idx) => xScale(idx))
+      .y(d => yScale(d))
+      .curve(d3.curveMonotoneX);
+
+    const areaGen = d3.area<number>()
+      .x((_, idx) => xScale(idx))
+      .y0(height)
+      .y1(d => yScale(d))
+      .curve(d3.curveMonotoneX);
+
+    // Render gradient fill
+    const gradientId = `sparkline-grad-${seedName.replace(/[^\w]/g, '-').toLowerCase()}-${refreshTriggers}`;
+    const defs = svg.append('defs');
+    const grad = defs.append('linearGradient')
+      .attr('id', gradientId)
+      .attr('x1', '0%')
+      .attr('y1', '0%')
+      .attr('x2', '0%')
+      .attr('y2', '100%');
+
+    grad.append('stop')
+      .attr('offset', '0%')
+      .attr('stop-color', '#f43f5e') // rose-500
+      .attr('stop-opacity', 0.4);
+
+    grad.append('stop')
+      .attr('offset', '100%')
+      .attr('stop-color', '#f43f5e')
+      .attr('stop-opacity', 0.0);
+
+    // Add path area
+    svg.append('path')
+      .datum(points)
+      .attr('fill', `url(#${gradientId})`)
+      .attr('d', areaGen as any);
+
+    // Dynamic stroke line path
+    svg.append('path')
+      .datum(points)
+      .attr('fill', 'none')
+      .attr('stroke', '#f43f5e') // rose-500 line
+      .attr('stroke-width', 1.5)
+      .attr('stroke-linecap', 'round')
+      .attr('d', lineGen as any);
+
+    // Render tiny pulse circle indicators at the end of the sparkline
+    const lastIdx = points.length - 1;
+    const endX = xScale(lastIdx);
+    const endY = yScale(points[lastIdx]);
+
+    svg.append('circle')
+      .attr('cx', endX)
+      .attr('cy', endY)
+      .attr('r', 2)
+      .attr('fill', '#fda4af'); // rose-300
+  }, [seedName, refreshTriggers]);
+
+  return (
+    <svg 
+      ref={containerRef} 
+      className="w-[60px] h-3.5 overflow-visible shrink-0 select-none pointer-events-none" 
+    />
+  );
+}
+
+function VantiGeometricLoader({ color = "#f43f5e" }: { color?: string }) {
+  return (
+    <div className="relative w-16 h-16 flex items-center justify-center">
+      <svg viewBox="0 0 100 100" className="w-full h-full">
+        <motion.path
+          fill="none"
+          stroke={color}
+          strokeWidth="2"
+          animate={{
+            d: [
+              "M 50,20 L 80,50 L 50,80 L 20,50 Z", // Diamond
+              "M 20,20 L 80,20 L 80,80 L 20,80 Z", // Square
+              "M 50,15 L 90,85 L 10,85 Z",         // Triangle
+              "M 50,20 L 80,50 L 50,80 L 20,50 Z"  // Back to Diamond
+            ],
+            rotate: [0, 90, 180, 270, 360],
+            strokeDasharray: ["0 100", "50 50", "100 0", "0 100"]
+          }}
+          transition={{
+            duration: 4,
+            repeat: Infinity,
+            ease: "easeInOut"
+          }}
+        />
+      </svg>
+      <motion.div 
+        className="absolute w-2 h-2 bg-white rounded-full shadow-[0_0_8px_rgba(255,255,255,0.8)]"
+        animate={{
+          scale: [1, 1.5, 1],
+          opacity: [0.3, 1, 0.3]
+        }}
+        transition={{ duration: 2, repeat: Infinity }}
+      />
+    </div>
+  );
+}
+
+const PlaceDetailsPanel = React.memo(function PlaceDetailsPanel({ place, onBack, onClose, onShowRoute, onSetRoutingOrigin, isRoutingOrigin, user, weather }: PlaceDetailsPanelProps) {
+  const [analysis, setAnalysis] = useState<string | null>(null);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [showSaveToast, setShowSaveToast] = useState(false);
+
+  // Interactive Status Badges States
+  const [isOpen, setIsOpen] = useState(true);
+  const [isBusy, setIsBusy] = useState(() => Math.random() > 0.5);
+  const [sparklineRefreshCount, setSparklineRefreshCount] = useState(0);
+
+  // Tooltip Hover State
+  const [showTooltip, setShowTooltip] = useState(false);
+
+  // Accuracy Feedback adjusters & custom weight states
+  const [accuracyFeedback, setAccuracyFeedback] = useState<'yes' | 'no' | null>(null);
+  const [sliderScenic, setSliderScenic] = useState(75);
+  const [sliderTaste, setSliderTaste] = useState(80);
+  const [sliderSilence, setSliderSilence] = useState(60);
+  const [showSliders, setShowSliders] = useState(false);
+
+  // Expanding matching factors details Accordion
+  const [factorsExpanded, setFactorsExpanded] = useState(false);
+  const [hoursExpanded, setHoursExpanded] = useState(false);
+
+  // trip planner states
+  const [isPlanningTrip, setIsPlanningTrip] = useState(false);
+  const [showTripModal, setShowTripModal] = useState(false);
+  const [tripItinerary, setTripItinerary] = useState<any[] | null>(null);
+
+  // Dynamic Tooltip Match Factors
+  const tooltipExplanation = React.useMemo(() => {
+    const nameLower = (place.displayName || "").toLowerCase();
+    const isCoffeeOrFood = place.types?.includes('cafe') || 
+                           place.types?.includes('coffee') || 
+                           place.types?.includes('restaurant') || 
+                           place.types?.includes('food') ||
+                           nameLower.includes('coffee') || 
+                           nameLower.includes('cafe') ||
+                           nameLower.includes('kitchen') ||
+                           nameLower.includes('delight');
+    
+    if (accuracyFeedback === 'no') {
+      return `Custom parameter configuration active. Scenic: ${sliderScenic}%, Taste: ${sliderTaste}%, Quietness: ${sliderSilence}%. Adjusting your weights changes this recommendation live.`;
+    }
+    if (place.mode === 'canada') {
+      return "Matches key transit points, high density local check-ins, and curated environmental scores inside the Canada Zone.";
+    }
+    if (isCoffeeOrFood) {
+      return "Matches your preference for premium dining, taste profile alignment, and highly social morning activity periods.";
+    }
+    return "Matches selection for scenic visual panoramas, public ratings density, and high local feedback benchmarks.";
+  }, [place.mode, place.types, place.displayName, accuracyFeedback, sliderScenic, sliderTaste, sliderSilence]);
+
+  // Dynamic Curation Match Score Calculation
+  const curationScore = React.useMemo(() => {
+    if (accuracyFeedback === 'no') {
+      // Live calculated average of user-input sliders
+      return Math.min(100, Math.max(50, Math.round((sliderScenic + sliderTaste + sliderSilence) / 3)));
+    }
+    // Generate a consistent pseudo-random score between 82% and 99% based on place name length
+    const base = 84 + (place.displayName?.length || 0) % 15;
+    return Math.min(99, Math.max(82, base));
+  }, [place.displayName, accuracyFeedback, sliderScenic, sliderTaste, sliderSilence]);
+
+  const environmentalFactor = React.useMemo(() => {
+    if (place.mode === 'canada') {
+      return "Temperate Settlement Microclimate";
+    }
+    return "Optimal Urban Microclimate";
+  }, [place.mode]);
+  
+  const preferenceFactor = React.useMemo(() => {
+    if (place.rating && place.rating > 4.5) {
+      return "High Elite Rating Sync";
+    }
+    return "Trend Alignment Dynamic Sync";
+  }, [place.rating]);
+  const container = {
+    hidden: { opacity: 0 },
+    visible: { opacity: 1, transition: { staggerChildren: 0.1 } }
+  };
+  
+  const item = {
+    hidden: { opacity: 0, y: 10 },
+    visible: { opacity: 1, y: 0 }
+  };
+
+  const handleAddToCalendar = () => {
+    const title = place.displayName || "Visit Location";
+    const description = `Visit ${place.displayName} at ${place.formattedAddress}`;
+    const location = place.formattedAddress;
+    
+    const icsData = [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "BEGIN:VEVENT",
+      `SUMMARY:${title}`,
+      `DESCRIPTION:${description}`,
+      `LOCATION:${location}`,
+      "END:VEVENT",
+      "END:VCALENDAR"
+    ].join("\n");
+    
+    const blob = new Blob([icsData], { type: "text/calendar" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "event.ics";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleCreateTripPlan = async () => {
+    if (tripItinerary) {
+        setShowTripModal(true);
+        return;
+    }
+    setShowTripModal(true);
+    setIsPlanningTrip(true);
+    setTripItinerary(null);
+    try {
+        const res = await fetch('/api/plan-trip', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+                placeDetails: { 
+                    name: place.displayName, 
+                    address: place.formattedAddress, 
+                    types: place.types 
+                } 
+            })
+        });
+        const data = await res.json();
+        setTripItinerary(data.itinerary || []);
+    } catch(err) {
+        console.error(err);
+        setTripItinerary([]);
+    } finally {
+        setIsPlanningTrip(false);
+    }
+  };
+
+  const isMock = !place.fetchFields && typeof place.mode === 'string';
+
+  // State-based cache for the current session
+  const [analysisCache, setAnalysisCache] = useState<Record<string, string>>({});
+
+  // (Firebase check removed)
+  useEffect(() => {
+    // For mock places we already have custom metadata. Otherwise we can analyze.
+    if (isMock) {
+      if (place.mode === 'social') {
+        setAnalysis(place.socialActivity || "Vibrant social hub trending right now!");
+      } else if (place.mode === 'genius') {
+        setAnalysis(place.aiCurationSummary || "Smart AI matched recommended scenic spot.");
+      } else if (place.mode === 'perks') {
+        setAnalysis(place.perkDescription || "Claim local cashback with VPay.");
+      }
+      return;
+    }
+
+    // Use cache if available to save quota
+    if (place.id && analysisCache[place.id]) {
+      setAnalysis(analysisCache[place.id]);
+      return;
+    }
+
+    const abortController = new AbortController();
+
+    async function analyzePlace() {
+      if (!place.id) return;
+      setAnalyzing(true);
+      setAnalysis(null);
+      try {
+        const res = await fetch('/api/analyze-location', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ placeDetails: { name: place.displayName, address: place.formattedAddress, types: place.types } }),
+          signal: abortController.signal
+        });
+        
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          setAnalysis(data.error || "Detailed analysis is currently unavailable as Google Gemini API quota limits have been exceeded. Please try again in a few moments.");
+          return;
+        }
+        
+        const data = await res.json();
+        if (data.analysis) {
+          setAnalysis(data.analysis);
+          setAnalysisCache(prev => ({ ...prev, [place.id]: data.analysis }));
+        } else {
+          setAnalysis("Detailed analysis is temporarily unavailable.");
+        }
+      } catch (err: any) {
+        if (err.name !== 'AbortError') {
+          console.error("Analysis failed:", err);
+        }
+      } finally {
+        setAnalyzing(false);
+      }
+    }
+    analyzePlace();
+
+    return () => abortController.abort();
+  }, [place.id, isMock]);
+
+  const getPrimaryType = () => {
+    if (!place.types || place.types.length === 0) return 'Place';
+    const type = place.types[0];
+    return type.split('_').map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+  };
+
+  const getLatLng = () => {
+    if (isMock) {
+      return { lat: place.lat, lng: place.lng };
+    }
+    return {
+      lat: typeof place.location?.lat === 'function' ? place.location.lat() : place.location?.lat,
+      lng: typeof place.location?.lng === 'function' ? place.location.lng() : place.location?.lng
+    };
+  };
+
+  // Removed Firebase isSaved local state, utilizing useVantiStore instead
+  const bookmarkedPlaces = useVantiStore((state) => state.bookmarkedPlaces);
+  const toggleBookmark = useVantiStore((state) => state.toggleBookmark);
+  const isSavedLocally = !!bookmarkedPlaces[place?.id];
+
+  const handleSave = async () => {
+    if (!place.id || isSaving) return;
+
+    if (typeof navigator !== 'undefined' && navigator.vibrate) {
+      try {
+        if (isSavedLocally) {
+          navigator.vibrate([20, 50, 20]);
+        } else {
+          navigator.vibrate([50, 50, 50, 50, 100]);
+        }
+      } catch (e) {}
+    }
+
+    setIsSaving(true);
+    
+    try {
+      toggleBookmark(place);
+      if (!isSavedLocally) {
+        setShowSaveToast(true);
+        setTimeout(() => setShowSaveToast(false), 3000);
+      }
+    } catch (err) {
+      console.error("Save error", err);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const mapsLib = useMapsLibrary('core');
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobile(window.innerWidth < 768);
+    };
+    handleResize();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  const coords = getLatLng();
+
+  const [hasStreetView, setHasStreetView] = useState(false);
+  const [streetViewPanoId, setStreetViewPanoId] = useState<string | null>(null);
+  const [showStreetView, setShowStreetView] = useState(false);
+  const panoRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setHasStreetView(false);
+    setStreetViewPanoId(null);
+    setShowStreetView(false);
+    
+    if (!coords || !coords.lat || !coords.lng) return;
+    
+    const gMaps = (window as any).google?.maps;
+    if (!gMaps) return;
+
+    try {
+      const service = new gMaps.StreetViewService();
+      service.getPanorama({
+        location: coords,
+        radius: 200
+      }, (data: any, status: any) => {
+        if (status === gMaps.StreetViewStatus.OK && data && data.location && data.location.pano) {
+          setHasStreetView(true);
+          setStreetViewPanoId(data.location.pano);
+        }
+      });
+    } catch (err) {
+      console.error("StreetView check error:", err);
+    }
+  }, [coords.lat, coords.lng, mapsLib]);
+
+  useEffect(() => {
+    const gMaps = (window as any).google?.maps;
+    if (showStreetView && panoRef.current && streetViewPanoId && gMaps) {
+      try {
+        setTimeout(() => {
+          if (panoRef.current) {
+            new gMaps.StreetViewPanorama(panoRef.current, {
+              position: coords,
+              visible: true,
+              addressControl: false,
+              linksControl: true,
+              zoomControl: true,
+              enableCloseButton: false,
+              motionTracking: false,
+              motionTrackingControl: false
+            });
+          }
+        }, 100);
+      } catch (err) {
+        console.error("StreetView init error:", err);
+      }
+    }
+  }, [showStreetView, streetViewPanoId, coords.lat, coords.lng, mapsLib]);
+
+  const variants = {
+    initial: isMobile 
+      ? { y: "100%", opacity: 1, x: 0 } 
+      : { opacity: 0, scale: 0.95, y: 30, x: 24 },
+    animate: { y: 0, x: 0, opacity: 1, scale: 1 },
+    exit: isMobile 
+      ? { y: "100%", opacity: 1, x: 0 } 
+      : { opacity: 0, scale: 0.95, y: 30, x: 24 }
+  };
+
+  const transition = { type: "spring" as const, damping: 28, stiffness: 210 };
+
+  const headerVariants = {
+    default: {
+      backgroundColor: "rgba(255, 255, 255, 0.02)",
+      borderColor: "rgba(255, 255, 255, 0.1)",
+      transition: { duration: 0.3 }
+    },
+    stormAlert: {
+      backgroundColor: ["rgba(255, 255, 255, 0.02)", "rgba(239, 68, 68, 0.15)", "rgba(255, 255, 255, 0.02)"],
+      borderColor: ["rgba(255, 255, 255, 0.1)", "rgba(239, 68, 68, 0.5)", "rgba(255, 255, 255, 0.1)"],
+      transition: {
+        repeat: Infinity,
+        duration: 2.2,
+        ease: "easeInOut" as const
+      }
+    }
+  };
+
+  const canAddToItinerary = useVantiStore((state) => !state.itinerary.find(p => p.id === place.id));
+  const addToItinerary = useVantiStore((state) => state.addToItinerary);
+  const showTripSidebar = useVantiStore((state) => state.showTripSidebar);
+  const setShowTripSidebar = useVantiStore((state) => state.setShowTripSidebar);
+
+  const triggerHaptic = (type: 'tap' | 'success') => {
+    if (typeof navigator !== 'undefined' && navigator.vibrate) {
+      navigator.vibrate(type === 'success' ? [15, 30, 15] : 10);
+    }
+  };
+
+  const handleAddToItinerary = () => {
+    addToItinerary(place);
+    triggerHaptic('success');
+    if (!showTripSidebar) {
+      setShowTripSidebar(true);
+    }
+  };
+
+  return (
+    <FocusLock returnFocus className="contents">
+    <motion.div 
+      layout
+      layoutId="place-details-panel"
+      drag="y"
+      dragConstraints={{ top: 0, bottom: 200 }}
+      onDragEnd={(_, info) => {
+        if (info.offset.y > 100) {
+          onClose ? onClose() : onBack();
+        }
+      }}
+      variants={variants}
+      initial="initial"
+      animate="animate"
+      exit="exit"
+      transition={transition}
+      className="flex flex-col h-full bg-transparent"
+    >
+      {/* Header */}
+      <motion.div 
+        variants={headerVariants}
+        animate={weather === 'Storm' ? 'stormAlert' : 'default'}
+        className="p-3 md:p-4 border-b flex items-center justify-between backdrop-blur-md"
+      >
+        <div className="flex items-center gap-2 md:gap-3">
+          <button 
+            onClick={(e) => {
+              e.stopPropagation();
+              e.preventDefault();
+              onBack();
+            }}
+            className="w-11 h-11 flex items-center justify-center rounded-xl text-slate-400 hover:text-white hover:bg-white/5 transition-all active:scale-90"
+          >
+            <ArrowLeft className="w-5 h-5" />
+          </button>
+          <span className="text-sm font-medium text-slate-400 hidden xs:inline">Back to results</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <button 
+            onClick={(e) => {
+              e.stopPropagation();
+              e.preventDefault();
+              handleSave();
+            }}
+            className={cn(
+              "w-11 h-11 flex items-center justify-center rounded-xl transition-all border active:scale-90",
+               isSavedLocally ? "bg-amber-500/10 text-amber-500 border-amber-500/30" : "bg-white/5 text-slate-400 hover:text-white border-transparent"
+            )}
+          >
+            <Bookmark className={cn("w-5 h-5", isSavedLocally && "fill-current")} />
+          </button>
+          {onClose && (
+            <button 
+              onClick={(e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                onClose();
+              }}
+              className="w-11 h-11 flex items-center justify-center rounded-xl text-slate-400 hover:text-white hover:bg-white/5 transition-all border border-transparent active:scale-90"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          )}
+        </div>
+      </motion.div>
+
+        {/* Content */}
+        <motion.div 
+          variants={container}
+          initial="hidden"
+          animate="visible"
+          className="flex-1 overflow-y-auto px-6 py-6 pb-[calc(6rem+env(safe-area-inset-bottom,0px))] scrollbar-thin scrollbar-thumb-slate-700"
+        >
+          
+          <motion.div variants={item} className="w-full h-48 bg-slate-800 rounded-xl mb-6 relative overflow-hidden group">
+            <div className="absolute inset-0 bg-gradient-to-t from-[#14171d] via-black/40 to-transparent z-10"></div>
+            {isMock && place.imageUrl ? (
+              <img 
+                src={place.imageUrl} 
+                alt={place.displayName}
+                className="absolute inset-0 w-full h-full object-cover"
+              />
+            ) : !isMock && place.photos && place.photos.length > 0 ? (
+              <div className="flex w-full h-full overflow-x-auto snap-x snap-mandatory scrollbar-none">
+                {place.photos.map((photo: any, index: number) => (
+                  <img 
+                    key={index}
+                    src={photo.getURI({ maxWidth: 600 })} 
+                    alt={place.displayName || 'Location'}
+                    referrerPolicy="no-referrer"
+                    className="w-full h-full object-cover shrink-0 snap-center"
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className="absolute inset-0 flex items-center justify-center opacity-30">
+                 <MapPin className="w-16 h-16 text-slate-500" />
+              </div>
+            )}
+            
+            <div className="absolute bottom-4 left-4 z-20">
+               <span className="inline-block px-2.5 py-1 bg-rose-500/20 text-rose-400 text-xs font-semibold rounded-md backdrop-blur-sm border border-rose-500/30">
+                 {getPrimaryType()}
+               </span>
+            </div>
+          </motion.div>
+
+          <motion.h2 variants={item} className="text-2xl font-display font-bold text-white mb-2 leading-tight">
+            {place.displayName}
+          </motion.h2>
+
+          {/* New Drag to Trip Handle Segment */}
+          <motion.div 
+            variants={item}
+            className="mb-6"
+          >
+            <motion.div
+              drag="x"
+              dragConstraints={{ left: 0, right: 300 }}
+              dragElastic={0.2}
+              onDragEnd={(_, info) => {
+                if (info.offset.x > 150) {
+                   handleAddToItinerary();
+                }
+              }}
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              className="relative p-4 rounded-2xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-between cursor-grab active:cursor-grabbing overflow-hidden group"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-rose-500 flex items-center justify-center text-white shadow-[0_5px_15px_rgba(244,63,94,0.4)]">
+                  <Plus className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-white">Add to Trip</h4>
+                  <p className="text-[10px] text-rose-400 font-bold uppercase tracking-wider">Drag right → to drop into My Trip</p>
+                </div>
+              </div>
+              <motion.div 
+                animate={{ x: [0, 5, 0] }}
+                transition={{ repeat: Infinity, duration: 1.5 }}
+                className="text-rose-500/50"
+              >
+                <ChevronRight className="w-5 h-5" />
+              </motion.div>
+              
+              {/* Drag progress background indicator */}
+              <div className="absolute inset-y-0 left-0 bg-rose-500/5 transition-all" style={{ width: 'var(--drag-progress, 0%)' }} />
+            </motion.div>
+          </motion.div>
+
+          {/* Interactive Simulated Status Badges with Live Trend Gauge */}
+          <motion.div variants={item} className="flex flex-wrap gap-2 mb-4 select-none items-center">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                setIsOpen(prev => !prev);
+                if (typeof navigator !== 'undefined' && navigator.vibrate) {
+                  try { navigator.vibrate(12); } catch (e) {}
+                }
+              }}
+              className={cn(
+                "px-3 py-2.5 text-[10px] min-h-[44px] font-mono font-black uppercase tracking-wider rounded-lg border transition-all flex items-center justify-center gap-1.5 active:scale-95 shadow-sm",
+                isOpen 
+                  ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/25 hover:bg-emerald-500/20" 
+                  : "bg-slate-800/60 text-slate-405 border-slate-700 hover:bg-slate-800"
+              )}
+            >
+              <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", isOpen ? "bg-emerald-400 animate-pulse" : "bg-slate-400")} />
+              {isOpen ? "● Open Now" : "○ Closed"}
+            </button>
+
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                setIsBusy(prev => !prev);
+                if (typeof navigator !== 'undefined' && navigator.vibrate) {
+                  try { navigator.vibrate(12); } catch (e) {}
+                }
+              }}
+              className={cn(
+                "px-3 py-2.5 text-[10px] min-h-[44px] font-mono font-black uppercase tracking-wider rounded-lg border transition-all flex items-center justify-center gap-1.5 active:scale-95 shadow-sm",
+                isBusy 
+                  ? "bg-amber-500/10 text-amber-400 border-amber-500/25 hover:bg-amber-500/20" 
+                  : "bg-teal-500/10 text-teal-400 border-teal-500/25 hover:bg-teal-500/20"
+              )}
+            >
+              <span>{isBusy ? "⚡ Busy Axis" : "🍃 Quiet Zone"}</span>
+            </button>
+
+            {/* Live Pop Trend Sparkline Gauge (D3.JS) */}
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                setSparklineRefreshCount(prev => prev + 1);
+                if (typeof navigator !== 'undefined' && navigator.vibrate) {
+                  try { navigator.vibrate(10); } catch (e) {}
+                }
+              }}
+              title="Simulate Real-time Popularity Wave"
+              className="px-3 py-2.5 text-[10px] min-h-[44px] font-mono font-black uppercase tracking-wider rounded-lg border border-rose-500/20 bg-rose-500/5 text-rose-400 flex items-center justify-center gap-2 shadow-sm hover:bg-rose-500/10 cursor-pointer active:scale-95 transition-all select-none"
+            >
+              <span className="text-slate-400 text-[9px] font-semibold flex items-center gap-1">
+                <span className="w-1 h-1 rounded-full bg-rose-400 animate-ping" />
+                6H Trend
+              </span>
+              <TinySparkline seedName={place.displayName || "spot"} refreshTriggers={sparklineRefreshCount} />
+            </button>
+          </motion.div>
+          
+          <motion.div variants={item} className="flex items-center gap-2 mb-6">
+            {(place.rating !== null && place.rating !== undefined) && (
+              <div className="flex items-center text-amber-400 font-medium bg-amber-400/10 px-2 py-0.5 rounded text-sm">
+                <Star className="w-4 h-4 mr-1 fill-amber-400" />
+                {place.rating}
+                <span className="text-slate-500 ml-1">({place.userRatingCount} reviews)</span>
+              </div>
+            )}
+          </motion.div>
+
+          {hasStreetView && (
+            <motion.div variants={item} className="mb-6 overflow-hidden rounded-2xl border border-white/5 bg-[#1b1c22]/50 p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <Compass className="w-4 h-4 text-rose-500 animate-[spin_8s_linear_infinite]" />
+                  <span className="text-[11px] font-black uppercase tracking-wider text-slate-300">Street View Panorama</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    if (typeof navigator !== 'undefined' && navigator.vibrate) {
+                      try { navigator.vibrate(15); } catch {}
+                    }
+                    setShowStreetView(!showStreetView);
+                  }}
+                  className={cn(
+                    "px-3 py-2 min-h-[44px] flex items-center justify-center text-[10px] font-black uppercase tracking-wider rounded-lg border transition-all active:scale-95",
+                    showStreetView 
+                      ? "bg-rose-500/20 border-rose-500/40 text-rose-400" 
+                      : "bg-white/5 border-white/10 text-slate-400 hover:text-white"
+                  )}
+                >
+                  {showStreetView ? "Hide Environment" : "Explore 360°"}
+                </button>
+              </div>
+              
+              {showStreetView ? (
+                <div 
+                  ref={panoRef} 
+                  className="w-full h-52 bg-black rounded-xl border border-white/10 shadow-inner overflow-hidden relative"
+                />
+              ) : (
+                <div 
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    if (typeof navigator !== 'undefined' && navigator.vibrate) {
+                      try { navigator.vibrate(15); } catch {}
+                    }
+                    setShowStreetView(true);
+                  }}
+                  className="w-full h-24 bg-slate-800/20 hover:bg-slate-800/40 rounded-xl border border-white/5 flex flex-col items-center justify-center gap-1.5 cursor-pointer group transition-colors"
+                >
+                  <Compass className="w-6 h-6 text-slate-500 group-hover:text-rose-400 transition-colors animate-pulse" />
+                  <span className="text-[10px] font-bold text-slate-400 group-hover:text-slate-200">Interactive 360° street level view available</span>
+                </div>
+              )}
+            </motion.div>
+          )}
+
+          {isMock && place.mode === 'perks' && (
+            <motion.div variants={item} className="mb-6 p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex gap-3 items-center">
+              <div className="w-10 h-10 rounded-lg bg-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0">
+                 <Award className="w-5 h-5 animate-pulse" />
+              </div>
+              <div>
+                <p className="text-xs text-emerald-400 font-black uppercase tracking-wider">Active Partner Discount</p>
+                <p className="text-sm text-slate-200 mt-0.5">Use VANTi Pay on-site for immediate cashback codes and perks.</p>
+              </div>
+            </motion.div>
+          )}
+
+          <motion.div variants={item} className="space-y-5">
+            <div className="flex items-start gap-3 text-slate-300">
+              <MapPin className="w-5 h-5 text-slate-500 mt-0.5 shrink-0" />
+              <p className="text-sm leading-relaxed">{place.formattedAddress}</p>
+            </div>
+
+            {/* Weekly Opening Hours Collapsible */}
+            {place.regularOpeningHours?.weekdayDescriptions && (
+              <div className="border-t border-slate-800 pt-4">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    setHoursExpanded(!hoursExpanded);
+                    if (typeof navigator !== 'undefined' && navigator.vibrate) { try { navigator.vibrate(8); } catch(e){} }
+                  }}
+                  className="w-full py-3 min-h-[44px] flex items-center justify-between group cursor-pointer"
+                >
+                  <div className="flex items-center gap-3 text-slate-300 group-hover:text-white transition-colors">
+                    <Clock className="w-5 h-5 text-slate-500 group-hover:text-rose-400 shrink-0" />
+                    <span className="text-sm font-medium">Weekly Operating Hours</span>
+                  </div>
+                  {hoursExpanded ? (
+                    <ChevronUp className="w-4 h-4 text-slate-500 group-hover:text-slate-300" />
+                  ) : (
+                    <ChevronDown className="w-4 h-4 text-slate-500 group-hover:text-slate-300" />
+                  )}
+                </button>
+
+                <AnimatePresence>
+                  {hoursExpanded && (
+                    <motion.div
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: "auto" }}
+                      exit={{ opacity: 0, height: 0 }}
+                      className="overflow-hidden"
+                    >
+                      <div className="pt-3 pl-8 space-y-2">
+                        {place.regularOpeningHours.weekdayDescriptions.map((day: string, idx: number) => {
+                          const [dayName, ...timeRange] = day.split(': ');
+                          const timeString = timeRange.join(': ');
+                          // Simple check for today
+                          const today = new Date().toLocaleDateString('en-US', { weekday: 'long' });
+                          const isToday = dayName.toLowerCase().includes(today.toLowerCase());
+
+                          return (
+                            <div key={idx} className={cn(
+                              "flex justify-between text-xs font-mono py-1 border-b border-white/5 last:border-0",
+                              isToday ? "text-rose-400 font-bold" : "text-slate-400"
+                            )}>
+                              <span className="uppercase tracking-tight">{dayName}</span>
+                              <span>{timeString}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            )}
+
+            <div className="p-4 rounded-xl bg-gradient-to-br from-[#1b1c22] to-[#121318] border border-slate-800">
+              <h3 className="flex items-center gap-2 text-sm font-semibold text-rose-400 mb-2">
+                <Sparkles className="w-4 h-4 text-rose-400" />
+                {isMock ? "VANTi Travel Insights" : "AI Travel Intelligent Match"}
+              </h3>
+
+              {/* Curation Match Progress Dashboard */}
+              <div className="mb-4 p-3.5 bg-slate-950/45 rounded-xl border border-white/5 space-y-3 relative">
+                <div className="flex justify-between items-center">
+                  <div className="flex items-center gap-1.5 relative">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                      <Compass className="w-3.5 h-3.5 text-rose-400 animate-pulse animate-[spin_10s_linear_infinite]" /> VANTi Curation Match
+                    </span>
+                    
+                    {/* Hover Tooltip trigger is structured dynamically */}
+                    <div 
+                      className="relative block"
+                      onMouseEnter={() => setShowTooltip(true)}
+                      onMouseLeave={() => setShowTooltip(false)}
+                    >
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          e.preventDefault();
+                        }}
+                        aria-label="Curation factors"
+                        className="p-1 text-slate-400 hover:text-white transition-colors min-w-[36px] min-h-[36px] flex items-center justify-center cursor-help"
+                      >
+                        <Info className="w-3.5 h-3.5" />
+                      </button>
+
+                      <AnimatePresence>
+                        {showTooltip && (
+                          <motion.div
+                            initial={{ opacity: 0, scale: 0.95, y: -4 }}
+                            animate={{ opacity: 1, scale: 1, y: 0 }}
+                            exit={{ opacity: 0, scale: 0.95, y: -4 }}
+                            transition={{ duration: 0.15 }}
+                            className="absolute bottom-full left-0 mb-2 p-3 w-64 rounded-xl bg-slate-950 border border-rose-500/30 text-[10.5px] text-slate-300 font-sans tracking-tight leading-relaxed shadow-[0_12px_32px_rgba(244,63,94,0.35)] backdrop-blur-md z-[110]"
+                          >
+                            <span className="text-[9px] font-mono text-rose-400 font-black uppercase tracking-wider block mb-1">✔ MATCH TRACE</span>
+                            <p>{tooltipExplanation}</p>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
+                  </div>
+                  
+                  <span className="text-xs font-mono font-black text-rose-400">{curationScore}% Alignment</span>
+                </div>
+                
+                {/* Score Progress Bar */}
+                <div className="w-full bg-slate-900 rounded-full h-1.5 overflow-hidden p-[1px] border border-slate-800/60">
+                  <motion.div 
+                    initial={{ width: 0 }}
+                    animate={{ width: `${curationScore}%` }}
+                    transition={{ type: "spring", stiffness: 80, damping: 15 }}
+                    className="bg-gradient-to-r from-rose-500 via-amber-400 to-rose-400 h-full rounded-full" 
+                  />
+                </div>
+
+                {/* Simulated Curation Attributes Grid based on place metadata & environmental factor */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[9px] font-mono leading-none pt-1">
+                  <div className="p-2 rounded bg-[#0f1115] border border-slate-900 flex flex-col gap-1 pointer-events-auto">
+                    <span className="text-slate-550 uppercase text-[8px] tracking-wider font-bold">Environment Status</span>
+                    <span className="font-extrabold text-[#38bdf8] truncate">{environmentalFactor}</span>
+                  </div>
+                  <div className="p-2 rounded bg-[#0f1115] border border-slate-900 flex flex-col gap-1 pointer-events-auto">
+                    <span className="text-slate-550 uppercase text-[8px] tracking-wider font-bold">User Taste Alignment</span>
+                    <span className="font-extrabold text-[#fbbf24] truncate">{preferenceFactor}</span>
+                  </div>
+                </div>
+
+                {/* Match Accuracy Interaction Indicator */}
+                <div className="flex justify-between items-center bg-[#07080c] p-2 rounded-lg border border-slate-900/60 transition-all">
+                  <span className="text-[9px] text-slate-400 font-bold uppercase font-mono tracking-wider">Is this match accurate?</span>
+                  <div className="flex gap-1">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        e.preventDefault();
+                        setAccuracyFeedback('yes');
+                        setShowSliders(false);
+                        if (typeof navigator !== 'undefined' && navigator.vibrate) { try { navigator.vibrate(10); } catch(e){} }
+                      }}
+                      className={cn(
+                        "p-2.5 rounded-lg border transition-all active:scale-90 min-w-[44px] min-h-[44px] flex items-center justify-center cursor-pointer",
+                        accuracyFeedback === 'yes'
+                          ? "bg-emerald-500/20 border-emerald-500/40 text-emerald-400 shadow-[0_0_10px_rgba(16,185,129,0.2)]"
+                          : "bg-slate-950 border-slate-800 text-slate-400 hover:text-white"
+                      )}
+                      title="Accurate recommendation"
+                    >
+                      <ThumbsUp className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        e.preventDefault();
+                        setAccuracyFeedback('no');
+                        setShowSliders(true);
+                        if (typeof navigator !== 'undefined' && navigator.vibrate) { try { navigator.vibrate(10); } catch(e){} }
+                      }}
+                      className={cn(
+                        "p-2.5 rounded-lg border transition-all active:scale-90 min-w-[44px] min-h-[44px] flex items-center justify-center cursor-pointer",
+                        accuracyFeedback === 'no'
+                          ? "bg-rose-500/20 border-rose-500/40 text-rose-400 shadow-[0_0_10px_rgba(244,63,94,0.2)]"
+                          : "bg-slate-950 border-slate-800 text-slate-400 hover:text-white"
+                      )}
+                      title="Need to adjust sliders"
+                    >
+                      <ThumbsDown className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Live recalibration sliders slider container */}
+                <AnimatePresence>
+                  {showSliders && accuracyFeedback === 'no' && (
+                    <motion.div
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: "auto" }}
+                      exit={{ opacity: 0, height: 0 }}
+                      className="p-3 bg-slate-950/70 border border-rose-500/20 rounded-xl space-y-3 overflow-hidden shadow-inner"
+                    >
+                      <div className="flex items-center justify-between text-[10px] font-mono text-rose-300 font-bold">
+                        <span className="flex items-center gap-1"><Sliders className="w-3 h-3" /> Tuning Parameters</span>
+                        <span className="text-slate-400">Live Recalibrating Score</span>
+                      </div>
+                      
+                      {/* Slider Scenic */}
+                      <div className="space-y-1">
+                        <div className="flex justify-between text-[9px] font-mono text-slate-400 leading-none">
+                          <span>Scenic Priority</span>
+                          <span>{sliderScenic}%</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="10"
+                          max="100"
+                          value={sliderScenic}
+                          onChange={(e) => setSliderScenic(Number(e.target.value))}
+                          className="w-full accent-rose-500 h-1 bg-slate-800 rounded-lg cursor-pointer appearance-none"
+                        />
+                      </div>
+
+                      {/* Slider Taste */}
+                      <div className="space-y-1">
+                        <div className="flex justify-between text-[9px] font-mono text-slate-400 leading-none">
+                          <span>Taste Connection</span>
+                          <span>{sliderTaste}%</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="10"
+                          max="100"
+                          value={sliderTaste}
+                          onChange={(e) => setSliderTaste(Number(e.target.value))}
+                          className="w-full accent-amber-400 h-1 bg-slate-800 rounded-lg cursor-pointer appearance-none"
+                        />
+                      </div>
+
+                      {/* Slider Silence */}
+                      <div className="space-y-1">
+                        <div className="flex justify-between text-[9px] font-mono text-slate-400 leading-none">
+                          <span>Quietness preference</span>
+                          <span>{sliderSilence}%</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="10"
+                          max="100"
+                          value={sliderSilence}
+                          onChange={(e) => setSliderSilence(Number(e.target.value))}
+                          className="w-full accent-emerald-400 h-1 bg-slate-800 rounded-lg cursor-pointer appearance-none"
+                        />
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
+                {/* Expandable Matching Metrics Accordion */}
+                <div className="border-t border-slate-900 pt-1.5">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      e.preventDefault();
+                      setFactorsExpanded(prev => !prev);
+                      if (typeof navigator !== 'undefined' && navigator.vibrate) { try { navigator.vibrate(8); } catch(e){} }
+                    }}
+                    className="w-full py-3 min-h-[44px] flex items-center justify-between text-[10px] font-mono text-slate-400 hover:text-slate-200 transition-colors select-none cursor-pointer"
+                  >
+                    <span className="font-bold flex items-center gap-1.5 uppercase">
+                      <Zap className="w-3 h-3 text-amber-400 animate-pulse" /> Detailed Metrics Check
+                    </span>
+                    {factorsExpanded ? <ChevronUp className="w-3.5 h-3.5 text-slate-500" /> : <ChevronDown className="w-3.5 h-3.5 text-slate-500" />}
+                  </button>
+                  <AnimatePresence>
+                    {factorsExpanded && (
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: "auto" }}
+                        exit={{ opacity: 0, height: 0 }}
+                        className="space-y-1.5 pt-1.5 overflow-hidden"
+                      >
+                        <div className="flex justify-between items-center p-2 rounded bg-[#0b0c10] border border-slate-900 text-[9.5px] font-mono leading-none">
+                          <span className="text-slate-550 flex items-center gap-1.5"><Volume2 className="w-3.5 h-3.5 text-teal-400 shrink-0" /> Ambient Noise Factor</span>
+                          <span className="font-extrabold text-teal-400">Low (~38dB)</span>
+                        </div>
+                        <div className="flex justify-between items-center p-2 rounded bg-[#0b0c10] border border-slate-900 text-[9.5px] font-mono leading-none">
+                          <span className="text-slate-550 flex items-center gap-1.5"><Timer className="w-3.5 h-3.5 text-amber-400 shrink-0" /> Ideal Booking Window</span>
+                          <span className="font-extrabold text-amber-400">12:00 - 15:00 Zone</span>
+                        </div>
+                        <div className="flex justify-between items-center p-2 rounded bg-[#0b0c10] border border-slate-900 text-[9.5px] font-mono leading-none">
+                          <span className="text-slate-550 flex items-center gap-1.5"><Navigation className="w-3.5 h-3.5 text-rose-400 shrink-0" /> Expressway Proximity</span>
+                          <span className="font-extrabold text-rose-400">Under 10 mins</span>
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                  {analyzing ? (
+                    <div className="space-y-4 my-4 pt-2">
+                      <div className="flex items-center gap-2 mb-2">
+                        <SkeletonCircle size="w-4 h-4" />
+                        <SkeletonText className="w-24 h-2.5" />
+                      </div>
+                      <div className="space-y-2.5">
+                        <SkeletonText className="w-full h-3" />
+                        <SkeletonText className="w-[95%] h-3" />
+                        <SkeletonText className="w-[90%] h-3" />
+                        <SkeletonText className="w-[40%] h-3" />
+                      </div>
+                      <div className="flex gap-2 mt-4">
+                        <Skeleton className="w-16 h-6 rounded-full" />
+                        <Skeleton className="w-20 h-6 rounded-full" />
+                      </div>
+                    </div>
+                  ) : analysis ? (
+                <div className="space-y-2">
+                  <div className="flex justify-between items-start">
+                    <p className="text-sm text-slate-300 leading-relaxed font-sans flex-1" dangerouslySetInnerHTML={{__html: analysis.replace(/\n/g, '<br/>')}}></p>
+                    <SpeakButton text={analysis.replace(/<[^>]*>/g, '')} className="ml-2 mt-1 w-8 h-8 shrink-0" />
+                  </div>
+                </div>
+              ) : (
+                <p className="text-sm text-slate-500">Optimizing location details...</p>
+              )}
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        </motion.div>
+        
+        {/* Footer Action */}
+         <div className="p-4 md:p-6 border-t border-slate-800 bg-[#14171d] flex gap-2 pb-[calc(1.5rem+env(safe-area-inset-bottom,0px))] md:pb-8">
+           <button
+             onClick={(e) => {
+               e.stopPropagation();
+               e.preventDefault();
+               handleAddToCalendar();
+             }}
+             className="w-12 h-12 flex items-center justify-center bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl transition-colors shrink-0"
+             title="Add to Calendar"
+           >
+             <Calendar className="w-5 h-5" />
+           </button>
+          <button
+            onClick={handleAddToItinerary}
+            disabled={!canAddToItinerary}
+            className={cn(
+              "w-12 h-12 flex items-center justify-center rounded-xl transition-all shrink-0 outline-none border",
+              canAddToItinerary 
+                ? "bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-400 border-indigo-500/20" 
+                : "bg-emerald-500/80 text-white border-emerald-500 shadow-lg shadow-emerald-500/20"
+            )}
+            title={canAddToItinerary ? "Add to Trip" : "In Trip"}
+          >
+            {canAddToItinerary ? (
+              <Plus className="w-5 h-5" />
+            ) : (
+              <Check className="w-5 h-5" />
+            )}
+          </button>
+           {onSetRoutingOrigin && (
+             <button
+               onClick={(e) => {
+                 e.stopPropagation();
+                 e.preventDefault();
+                 onSetRoutingOrigin();
+               }}
+               className={cn(
+                 "w-12 h-12 flex items-center justify-center rounded-xl transition-all shrink-0 outline-none border",
+                 isRoutingOrigin
+                   ? "bg-emerald-500/80 text-white border-emerald-500 shadow-lg shadow-emerald-500/20"
+                   : "bg-amber-600/20 hover:bg-amber-600/30 text-amber-500 border-amber-500/20"
+               )}
+               title={isRoutingOrigin ? "Origin Set" : "Set as Route Origin"}
+             >
+               <MapPin className="w-5 h-5" />
+             </button>
+           )}
+           {onShowRoute ? (
+             <button
+               onClick={(e) => {
+                 e.stopPropagation();
+                 e.preventDefault();
+                 if (typeof navigator !== 'undefined' && navigator.vibrate) {
+                   try { navigator.vibrate(15); } catch {}
+                 }
+                 onShowRoute();
+               }}
+               className="flex-1 py-3.5 bg-rose-600 hover:bg-rose-500 text-white rounded-xl font-medium transition-colors flex items-center justify-center gap-2 shadow-lg shadow-rose-500/20 active:scale-95"
+             >
+               <Navigation className="w-4 h-4 animate-bounce" />
+               이 지도상에서 길찾기
+             </button>
+           ) : (
+             <a 
+               href={coords.lat && coords.lng ? `https://www.google.com/maps/search/?api=1&query=${coords.lat},${coords.lng}` : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(place.displayName)}`}
+               target="_blank"
+               rel="noopener noreferrer"
+               onClick={(e) => e.stopPropagation()}
+               className="flex-1 py-3.5 bg-rose-600 hover:bg-rose-500 text-white rounded-xl font-medium transition-colors flex items-center justify-center gap-2 shadow-lg shadow-rose-500/20"
+             >
+               <Navigation className="w-4 h-4" />
+               Open in Maps
+             </a>
+           )}
+         </div>
+
+         {/* Trip Planner Modal */}
+         <AnimatePresence>
+            {showTripModal && (
+                <motion.div
+                    initial={{ opacity: 0, y: 50, scale: 0.95 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 50, scale: 0.95 }}
+                    transition={{ type: "spring", stiffness: 200, damping: 20 }}
+                    className="absolute inset-0 z-50 bg-[#0b0c10]/95 backdrop-blur-xl border-t border-indigo-500/20 flex flex-col pt-16 overflow-hidden"
+                >
+                    <button 
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            e.preventDefault();
+                            setShowTripModal(false);
+                        }}
+                        className="absolute top-4 right-4 w-11 h-11 flex items-center justify-center bg-slate-800/80 hover:bg-slate-700 text-white rounded-full transition-colors z-50 cursor-pointer"
+                    >
+                        <X className="w-5 h-5" />
+                    </button>
+
+                    <div className="px-6 flex-1 overflow-y-auto pb-10 scrollbar-none">
+                        <div className="flex items-center gap-3 mb-6">
+                            <div className="w-12 h-12 bg-indigo-500/10 border border-indigo-500/20 rounded-2xl flex items-center justify-center text-indigo-400">
+                                <Compass className="w-6 h-6 animate-pulse" />
+                            </div>
+                            <div>
+                                <h2 className="text-xl font-black text-white tracking-tight font-sans">Trip Planner</h2>
+                                <p className="text-xs font-mono text-indigo-400 uppercase tracking-widest mt-0.5">VANTi Dynamic Itinerary</p>
+                            </div>
+                        </div>
+
+                        {isPlanningTrip ? (
+                            <div className="flex flex-col items-center justify-center h-64 gap-6">
+                                <VantiGeometricLoader color="#6366f1" />
+                                <span className="text-xs font-mono text-indigo-400 uppercase tracking-widest animate-pulse">Syncing Cognitive Itinerary...</span>
+                            </div>
+                        ) : tripItinerary && tripItinerary.length > 0 ? (
+                            <div className="space-y-6">
+                                {tripItinerary.map((day, dIdx) => (
+                                    <div key={dIdx} className="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-4 shadow-lg">
+                                        <div className="flex items-center gap-2 mb-4">
+                                            <span className="bg-indigo-500 text-white font-black text-xs px-2.5 py-1 rounded-md uppercase tracking-wider">Day {day.day}</span>
+                                            {day.notes && <span className="text-[10px] text-slate-400 font-mono italic truncate">"{day.notes}"</span>}
+                                        </div>
+                                        <div className="space-y-2.5">
+                                            {day.locations?.map((loc: string, lIdx: number) => (
+                                                <TaskListItem key={lIdx} loc={loc} />
+                                            ))}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        ) : (
+                            <div className="flex flex-col items-center justify-center h-64 gap-4 text-center">
+                                <Compass className="w-10 h-10 text-slate-700" />
+                                <span className="text-sm font-sans text-slate-500 px-8">No itinerary generated. Please try again.</span>
+                            </div>
+                        )}
+                    </div>
+                </motion.div>
+            )}
+         </AnimatePresence>
+
+         {/* Save Toast */}
+         <AnimatePresence>
+            {showSaveToast && (
+                <motion.div
+                    initial={{ opacity: 0, y: 30, scale: 0.95 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 20, scale: 0.95 }}
+                    transition={{ type: "spring", stiffness: 300, damping: 25 }}
+                    className="absolute bottom-6 left-1/2 -translate-x-1/2 bg-[#090b10] border border-amber-500/30 rounded-xl px-5 py-3 shadow-2xl flex items-center gap-3 z-50 pointer-events-none"
+                    style={{ minWidth: 'max-content' }}
+                >
+                    <div className="w-8 h-8 rounded-lg bg-amber-500/10 flex items-center justify-center border border-amber-500/20">
+                        <Check className="w-4 h-4 text-amber-500" strokeWidth={3} />
+                    </div>
+                    <div>
+                        <p className="text-sm font-sans font-medium text-white">Save Successful</p>
+                        <p className="text-[10px] font-mono text-amber-500/70 uppercase tracking-widest mt-0.5">Added to OS Hub</p>
+                    </div>
+                </motion.div>
+            )}
+         </AnimatePresence>
+
+    </motion.div>
+    </FocusLock>
+  );
+});
+
+export default PlaceDetailsPanel;
+

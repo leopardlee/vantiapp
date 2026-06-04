@@ -1,0 +1,107 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile information and settings preferences",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "units": { "type": "string", "enum": ["metric", "imperial"] },
+        "mapStyle": { "type": "string", "enum": ["streets", "satellite"] },
+        "language": { "type": "string", "enum": ["en", "ko"] }
+      },
+      "required": ["email"]
+    },
+    "RecentSearch": {
+      "title": "RecentSearch",
+      "description": "A recent location query searched by the user",
+      "type": "object",
+      "properties": {
+        "query": { "type": "string" },
+        "timestamp": { "type": "number" }
+      },
+      "required": ["query", "timestamp"]
+    },
+    "SavedPlace": {
+      "title": "SavedPlace",
+      "description": "A place saved by the user on the map",
+      "type": "object",
+      "properties": {
+        "placeId": { "type": "string" },
+        "displayName": { "type": "string" },
+        "address": { "type": "string" },
+        "lat": { "type": "number" },
+        "lng": { "type": "number" },
+        "savedAt": { "type": "number" }
+      },
+      "required": ["placeId", "displayName", "savedAt"]
+    },
+    "ChatMessage": {
+      "title": "ChatMessage",
+      "description": "Chat log between user and Gemini assistant",
+      "type": "object",
+      "properties": {
+        "text": { "type": "string" },
+        "isUser": { "type": "boolean" },
+        "timestamp": { "type": "number" },
+        "imageUrl": { "type": "string" }
+      },
+      "required": ["text", "isUser", "timestamp"]
+    },
+    "TravelSnapshot": {
+      "title": "TravelSnapshot",
+      "description": "A short-form travel snapshot shared by a user to the feed",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "userDisplayName": { "type": "string" },
+        "userPhotoURL": { "type": "string" },
+        "text": { "type": "string" },
+        "imageUrl": { "type": "string" },
+        "locationName": { "type": "string" },
+        "lat": { "type": "number" },
+        "lng": { "type": "number" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["userId", "text", "locationName", "createdAt"]
+    },
+    "Itinerary": {
+      "title": "Itinerary",
+      "description": "A list of stops in a user's trip plan",
+      "type": "object",
+      "properties": {
+        "stops": { "type": "array", "items": { "type": "object" } },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["stops", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "users/{userId}": {
+      "schema": { "$ref": "User" },
+      "description": "User profiles"
+    },
+    "users/{userId}/planner/active": {
+      "schema": { "$ref": "Itinerary" },
+      "description": "User's current active trip plan"
+    },
+    "users/{userId}/savedPlaces/{placeId}": {
+      "schema": { "$ref": "SavedPlace" },
+      "description": "User's saved places"
+    },
+    "users/{userId}/chatHistory/{messageId}": {
+      "schema": { "$ref": "ChatMessage" },
+      "description": "User's chat history with Gemini"
+    },
+    "users/{userId}/recentSearches/{searchId}": {
+      "schema": { "$ref": "RecentSearch" },
+      "description": "User's recent location search queries"
+    },
+    "travelSnapshots/{snapshotId}": {
+      "schema": { "$ref": "TravelSnapshot" },
+      "description": "Shared travel snapshots feed"
+    }
+  }
+}
