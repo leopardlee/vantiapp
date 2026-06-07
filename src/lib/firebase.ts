@@ -1,6 +1,7 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut } from "firebase/auth";
-import { getFirestore, doc, getDocFromServer } from "firebase/firestore";
+import { getFirestore, doc, getDocFromServer, collection, setDoc, query, where, getDocs, deleteDoc } from "firebase/firestore";
+import { getMessaging, getToken, onMessage, Messaging } from "firebase/messaging";
 import firebaseConfig from "../../firebase-applet-config.json";
 
 export const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
@@ -113,3 +114,15 @@ export const logout = async () => {
         throw error;
     }
 };
+
+// Messaging Setup
+let messaging: Messaging | null = null;
+try {
+  if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
+    messaging = getMessaging(app);
+  }
+} catch (err) {
+  console.warn("Firebase Messaging initialization suppressed:", err);
+}
+
+export { messaging, getToken, onMessage };

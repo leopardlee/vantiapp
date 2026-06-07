@@ -191,7 +191,7 @@ export default function WeatherRouteOptimizer({
         return { bg: 'bg-blue-500/10 border-blue-500/20 text-blue-400', icon: CloudRain };
       case 'snow':
       case 'snowy':
-      case 'storm':
+      case 'blizzard':
         return { bg: 'bg-sky-500/10 border-sky-500/20 text-sky-400', icon: Snowflake };
       case 'cloudy':
         return { bg: 'bg-slate-500/10 border-slate-500/20 text-slate-300', icon: Cloud };

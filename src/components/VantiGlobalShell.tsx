@@ -87,9 +87,17 @@ export function VantiGlobalShell({ children, bottomNavigation }: VantiGlobalShel
               filter: 'blur(8px)',
               transition: { duration: 0.65, ease: [0.25, 1, 0.5, 1] } 
             }}
-            className="absolute inset-0 z-[200] bg-[#0c0e12]/98 flex flex-col items-stretch select-none overflow-hidden touch-none"
+            className="absolute inset-0 z-[200] bg-[#0c0e12]/50 backdrop-blur-lg flex flex-col items-stretch select-none overflow-hidden touch-none"
             style={{ pointerEvents: 'auto' }}
           >
+            {/* Map Background Skeleton */}
+            <div className="absolute inset-0 overflow-hidden pointer-events-none z-0">
+               <div className="w-full h-full opacity-20" style={{ backgroundImage: 'radial-gradient(circle at 2px 2px, rgba(255,255,255,0.15) 1px, transparent 0)', backgroundSize: '32px 32px' }} />
+               {/* City grid layout skeletons */}
+               <div className="absolute top-[20%] left-[10%] w-[40%] h-[30%] bg-slate-800/20 rounded-xl" />
+               <div className="absolute bottom-[20%] right-[15%] w-[30%] h-[40%] bg-slate-800/20 rounded-3xl" />
+               <div className="absolute top-[50%] left-[60%] w-[20%] h-[15%] bg-slate-800/20 rounded-full" />
+            </div>
             {/* Top HUD Layout Skeleton */}
             <div className="absolute top-4 left-4 right-4 z-[210] flex flex-col gap-4">
               <div className="flex items-center justify-between w-full">
@@ -240,9 +248,15 @@ export function VantiGlobalShell({ children, bottomNavigation }: VantiGlobalShel
 
         {/* Bottom Navigation Area - Anchored to bottom with safe-area padding */}
         <footer className="shrink-0 w-full flex flex-col justify-end items-center gap-4 px-4 pb-[calc(1.5rem+env(safe-area-inset-bottom,0px))] md:pb-12" style={{ pointerEvents: 'none' }}>
-          <div className="w-full flex justify-center" style={{ pointerEvents: 'none' }}>
+          <motion.div
+            initial={{ y: 100, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            transition={{ type: 'spring', damping: 20, stiffness: 100, delay: 0.5 }}
+            className="w-full flex justify-center backdrop-blur-md rounded-[2.5rem]" 
+            style={{ pointerEvents: 'none' }}
+          >
             {bottomNavigation}
-          </div>
+          </motion.div>
         </footer>
       </div>
 

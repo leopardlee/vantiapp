@@ -7,21 +7,40 @@ const THEME_SOUNDS: Record<string, string> = {
   'Neo-Tokyo': 'https://assets.mixkit.co/active_storage/sfx/2581/2581-preview.mp3', // Cyber wind
 };
 
+const LOCATION_SOUNDS: Record<string, string> = {
+  'urban': 'https://assets.mixkit.co/active_storage/sfx/2560/2560-preview.mp3', // City street
+  'coastal': 'https://assets.mixkit.co/active_storage/sfx/1231/1231-preview.mp3', // Ocean waves
+  'natural': 'https://assets.mixkit.co/active_storage/sfx/1206/1206-preview.mp3', // Forest birds
+  'airport': 'https://assets.mixkit.co/active_storage/sfx/1523/1523-preview.mp3', // Airport lounge/plane
+  'station': 'https://assets.mixkit.co/active_storage/sfx/619/619-preview.mp3', // Train station
+  'busy': 'https://assets.mixkit.co/active_storage/sfx/2544/2544-preview.mp3', // Crowded cafe/mall
+};
+
 interface SoundEngineProps {
   theme: string;
   selectedPlace?: any | null;
   mapCenter?: { lat: number; lng: number } | null;
   mapHeading?: number;
+  nearbyHighlights?: any[];
 }
 
-export default function SoundEngine({ theme, selectedPlace, mapCenter, mapHeading = 0 }: SoundEngineProps) {
+export default function SoundEngine({ 
+  theme, 
+  selectedPlace, 
+  mapCenter, 
+  mapHeading = 0,
+  nearbyHighlights = []
+}: SoundEngineProps) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const locationAudioRef = useRef<HTMLAudioElement | null>(null);
   const currentThemeRef = useRef(theme);
+  const currentLocationTypeRef = useRef<string | null>(null);
 
   // Web Audio refs for procedural 3D spatialization layer
   const audioCtxRef = useRef<AudioContext | null>(null);
   const spatialPannerRef = useRef<PannerNode | null>(null);
   const ambientGainRef = useRef<GainNode | null>(null);
+  const locationGainRef = useRef<GainNode | null>(null);
   const spatialSourceGainRef = useRef<GainNode | null>(null);
   const whisperGainRef = useRef<GainNode | null>(null);
   const rumbleGainRef = useRef<GainNode | null>(null);
@@ -42,27 +61,33 @@ export default function SoundEngine({ theme, selectedPlace, mapCenter, mapHeadin
       const dest = ctx.destination;
 
       // 1. Ambient Background Track Integrator
-      let ambientSourceNode;
       if (audioRef.current) {
         try {
-          ambientSourceNode = ctx.createMediaElementSource(audioRef.current);
-        } catch (e) {
-          // In case of multiple connections or HMR loads
-        }
+          const ambientSourceNode = ctx.createMediaElementSource(audioRef.current);
+          const ambientG = ctx.createGain();
+          ambientG.gain.value = 0.12;
+          ambientSourceNode.connect(ambientG);
+          ambientG.connect(dest);
+          ambientGainRef.current = ambientG;
+        } catch (e) {}
       }
 
-      const ambientG = ctx.createGain();
-      ambientG.gain.value = 0.12;
-      if (ambientSourceNode) {
-        ambientSourceNode.connect(ambientG);
+      // 2. Location Ambient Track Integrator
+      if (locationAudioRef.current) {
+        try {
+          const locationSourceNode = ctx.createMediaElementSource(locationAudioRef.current);
+          const locationG = ctx.createGain();
+          locationG.gain.value = 0.08;
+          locationSourceNode.connect(locationG);
+          locationG.connect(dest);
+          locationGainRef.current = locationG;
+        } catch (e) {}
       }
-      ambientG.connect(dest);
-      ambientGainRef.current = ambientG;
 
-      // 2. Spatial Soundscape Generator
+      // 3. Spatial Soundscape Generator
       const panner = ctx.createPanner();
-      panner.panningModel = 'HRTF';
-      panner.distanceModel = 'inverse';
+      if (panner.panningModel) panner.panningModel = 'HRTF';
+      if (panner.distanceModel) panner.distanceModel = 'inverse';
       panner.refDistance = 1;
       panner.maxDistance = 1000;
       panner.rolloffFactor = 1.2;
@@ -72,7 +97,7 @@ export default function SoundEngine({ theme, selectedPlace, mapCenter, mapHeadin
       spatialPannerRef.current = panner;
 
       const spatialG = ctx.createGain();
-      spatialG.gain.value = 0.0; // Start muted, fade in when POI is opened
+      spatialG.gain.setTargetAtTime(0.0, ctx.currentTime, 0.1); // Start muted, fade in when POI is opened
       panner.connect(spatialG);
       spatialG.connect(dest);
       spatialSourceGainRef.current = spatialG;
@@ -110,7 +135,6 @@ export default function SoundEngine({ theme, selectedPlace, mapCenter, mapHeadin
       bp2.connect(whisperG);
       whisperG.connect(panner);
 
-      // Low frequency oscillator (LFO) creating slow wave dynamics
       const lfo = ctx.createOscillator();
       lfo.type = 'sine';
       lfo.frequency.value = 0.35; // ~3 second period wave
@@ -157,6 +181,12 @@ export default function SoundEngine({ theme, selectedPlace, mapCenter, mapHeadin
     if (!audioRef.current) {
       audioRef.current = new Audio();
       audioRef.current.loop = true;
+      audioRef.current.crossOrigin = "anonymous";
+    }
+    if (!locationAudioRef.current) {
+      locationAudioRef.current = new Audio();
+      locationAudioRef.current.loop = true;
+      locationAudioRef.current.crossOrigin = "anonymous";
     }
 
     const soundUrl = THEME_SOUNDS[theme];
@@ -176,7 +206,8 @@ export default function SoundEngine({ theme, selectedPlace, mapCenter, mapHeadin
                 clearInterval(fadeIn);
             }
         }, 100);
-    } else if (!soundUrl) {
+    } else if (!soundUrl && theme !== currentThemeRef.current) {
+        currentThemeRef.current = theme;
         let vol = audioRef.current?.volume || 0;
         const fadeOut = setInterval(() => {
             if (vol > 0.01) {
@@ -192,6 +223,54 @@ export default function SoundEngine({ theme, selectedPlace, mapCenter, mapHeadin
         }, 50);
     }
   }, [theme]);
+
+  // Handle Location Ambient Sounds
+  useEffect(() => {
+    if (!locationAudioRef.current) return;
+
+    let envType = 'urban'; // Default
+    if (nearbyHighlights && nearbyHighlights.length > 0) {
+      const types = nearbyHighlights.flatMap(p => p.types || []);
+      
+      if (types.some(t => t === 'airport')) {
+        envType = 'airport';
+      } else if (types.some(t => t === 'train_station' || t === 'transit_station')) {
+        envType = 'station';
+      } else if (types.some(t => t === 'restaurant' || t === 'cafe' || t === 'shopping_mall')) {
+        envType = 'busy';
+      } else if (types.includes('natural_feature') || types.includes('park') || types.includes('campground')) {
+        envType = 'natural';
+      } else if (types.some((t: string) => t.includes('ocean') || t.includes('beach') || t.includes('sea'))) {
+        envType = 'coastal';
+      }
+    } else if (mapCenter) {
+      // Fallback detection logic if no highlights are loaded yet
+      const lat = mapCenter.lat;
+      const lng = mapCenter.lng;
+      // Basic check for global prominent shoreline coordinates if needed, but urban is safe
+    }
+
+    if (envType !== currentLocationTypeRef.current) {
+      currentLocationTypeRef.current = envType;
+      const soundUrl = LOCATION_SOUNDS[envType];
+      
+      if (soundUrl) {
+        locationAudioRef.current.src = soundUrl;
+        locationAudioRef.current.volume = 0;
+        locationAudioRef.current.play().catch(() => {});
+        
+        let vol = 0;
+        const fadeIn = setInterval(() => {
+          if (vol < 0.1) {
+            vol += 0.005;
+            if (locationAudioRef.current) locationAudioRef.current.volume = vol;
+          } else {
+            clearInterval(fadeIn);
+          }
+        }, 100);
+      }
+    }
+  }, [nearbyHighlights, mapCenter]);
 
   // Audio Context trigger by User Gesture
   useEffect(() => {

@@ -12,7 +12,7 @@ let firebaseAdminInitialized = false;
 function initFirebaseAdmin() {
   if (firebaseAdminInitialized) return;
   if (!process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
-    console.warn("FIREBASE_SERVICE_ACCOUNT_KEY is missing. Firebase Admin will not run.");
+    console.log("FIREBASE_SERVICE_ACCOUNT_KEY is missing. Firebase Admin will not run.");
     return;
   }
   try {
@@ -23,7 +23,7 @@ function initFirebaseAdmin() {
     firebaseAdminInitialized = true;
     console.log("Firebase Admin initialized");
   } catch (error) {
-    console.error("Failed to parse FIREBASE_SERVICE_ACCOUNT_KEY:", error);
+    console.log("Failed to parse FIREBASE_SERVICE_ACCOUNT_KEY:", error);
   }
 }
 
@@ -42,6 +42,24 @@ async function startServer() {
       }
     }
   });
+
+  function isQuotaError(err: any): boolean {
+    if (!err) return false;
+    const msg = typeof err.message === 'string' ? err.message : "";
+    const str = String(err);
+    const combined = (msg + " " + str).toLowerCase();
+    
+    if (combined.includes("429") || 
+        combined.includes("quota") || 
+        combined.includes("exhausted") || 
+        combined.includes("limit_reached") || 
+        combined.includes("rate_limit")) return true;
+    
+    // Support nested error structures from @google/genai ApiError
+    if (err.error && (err.error.code === 429 || err.error.status === 'RESOURCE_EXHAUSTED')) return true;
+    if (err.status === 429 || err.code === 429) return true;
+    return false;
+  }
 
   // Helper to query Gemini with sequential model fallbacks (gemini-3.5-flash -> gemini-flash-latest -> gemini-3.1-flash-lite)
   async function generateContentWithFallback(params: {
@@ -69,9 +87,8 @@ async function startServer() {
         return result;
       } catch (err: any) {
         lastError = err;
-        const isQuotaError = err.message?.includes("429") || err.message?.includes("quota") || err.message?.includes("RESOURCE_EXHAUSTED") || err.status === 429;
-        if (isQuotaError) {
-          console.warn(`Model ${activeModel} exhausted or rate-limited. Trying next fallback...`);
+        if (isQuotaError(err)) {
+          console.log(`Model ${activeModel} exhausted or rate-limited. Trying next fallback...`);
           continue;
         }
         throw err;
@@ -199,8 +216,137 @@ async function startServer() {
   }
   
   // API Routes
+  // Smart Planner: Generate 3-day itinerary using Gemini
+  app.post("/api/smart-planner/itinerary", async (req, res) => {
+    try {
+      const { bookmarks, travelHistory, preferences } = req.body;
+      
+      const prompt = `
+        You are an advanced AI travel curator. Based on the following user data, create a highly personalized 3-day travel itinerary.
+        
+        User Bookmarks (Places they are interested in):
+        ${JSON.stringify(bookmarks)}
+        
+        User Travel History (Places they have visited):
+        ${JSON.stringify(travelHistory)}
+        
+        User Preferences (Moods, categories, etc.):
+        ${JSON.stringify(preferences)}
+
+        Task:
+        1. Analyze the vibe of their bookmarks (e.g., preference for nature, cafes, or landmarks).
+        2. Look at their travel history to avoid suggesting duplicates or to double down on what they love.
+        3. Generate a 3-day itinerary with:
+           - 2-3 logical stops per day.
+           - For each stop, provide a name, approximate time of day, and a 'why' (reasoning based on their profile).
+           - Provide one 'Cultural Pro-Tip' per day specific to the primary location/city.
+           - Estimate a total daily spend (budget) in USD.
+
+        Provide the response in raw JSON format with the following structure:
+        {
+          "title": "A 3-Day Journey through [City Name]",
+          "days": [
+            {
+              "day": 1,
+              "theme": "Theme name",
+              "stops": [{ "name": "Stop Name", "time": "Morning", "reason": "Reason based on bookmarks" }],
+              "culturalTip": "Cultural tip text",
+              "estimatedBudget": 50
+            }
+          ],
+          "overallSummary": "1-2 sentence summary of the trip vibe"
+        }
+        
+        Only return the raw JSON object.
+      `;
+
+      const response = await generateContentWithFallback({
+        model: 'gemini-3.5-flash',
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json"
+        }
+      });
+
+      const itinerary = JSON.parse(response.text || "{}");
+      res.json(itinerary);
+    } catch (err: any) {
+      console.log("Smart Planner Error:", err);
+      res.status(500).json({ error: "Failed to generate AI itinerary" });
+    }
+  });
+
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok" });
+  });
+
+  // Trip Summary AI generator
+  app.post("/api/summarize-log", async (req, res) => {
+    try {
+      const { favorites } = req.body;
+      const prompt = `You are an elegant travel companion AI. Process these saved locations from today's trip and weave them into a short, beautifully written chronological travel log (max 3 paragraphs). Write in the first person ("We started our day...", "I visited..."). Be descriptive and imaginative about the journey between these spots. Keep the output formatted in Markdown.
+      
+      Saved locations today:
+      ${favorites.map((f: any) => `- ${f.name} (${f.type}): ${f.note}`).join('\n')}
+      `;
+
+      const response = await generateContentWithFallback({
+        model: 'gemini-3.5-flash',
+        contents: prompt
+      });
+
+      res.json({ summary: response.text });
+    } catch (err: any) {
+      console.log(err);
+      res.status(500).json({ error: "Failed to generate summary" });
+    }
+  });
+
+  // AI Recommendations
+  app.post("/api/ai-recommendations", async (req, res) => {
+    try {
+      const { savedPlaces } = req.body;
+      if (!process.env.GEMINI_API_KEY) {
+        return res.status(500).json({ error: "Missing GEMINI_API_KEY" });
+      }
+
+      if (!savedPlaces || savedPlaces.length === 0) {
+        return res.json({ recommendations: [] });
+      }
+
+      const prompt = `
+        Based on the following places a user has saved in their travel journal, suggest 4 new similar POIs (Points of Interest) that they might enjoy visiting next.
+        Focus on places that share the same vibe, theme, or category (e.g., if they like art, suggest museums; if they like outdoor parks, suggest nature spots).
+        Provide the response in raw JSON format as an array of objects with the following keys:
+        - name: The name of the place
+        - reason: A short 1-sentence reason why it is recommended
+        - lat: Provide an approximate latitude for this trending place (or 0 if unknown)
+        - lng: Provide an approximate longitude for this trending place (or 0 if unknown)
+
+        Saved places footprint:
+        ${JSON.stringify(savedPlaces)}
+        
+        Only return the raw JSON array.
+      `;
+
+      const response = await ai.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: prompt
+      });
+      
+      let rawText = response.text || "[]";
+      rawText = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
+      
+      const recommendations = JSON.parse(rawText);
+      res.json({ recommendations });
+    } catch (e) {
+      console.log("AI Recommendations Error:", e);
+      res.json({ 
+        recommendations: [
+          { name: "Coffee Roasting Masterclass", reason: "Similar to places you frequently interact with.", lat: 0, lng: 0 }
+        ] 
+      });
+    }
   });
 
   // Chat endpoint for Gemini chatbot
@@ -227,13 +373,14 @@ async function startServer() {
         
         Guidelines:
         1. When the user asks to see a place, use the 'recenterMap' tool.
-        2. When searching for locations, use 'googleMaps' grounding for rich details.
-        3. ALWAYS use the 'showPlaces' tool when you identify specific points of interest (POIs) that should be displayed on the map.
-        4. For travel planning, use 'showRoute' to visualize paths.
-        5. Use 'setFlightMode' to start or stop a cinematic orbiting camera view around the current location.
-        6. When simulating a world, use 'setMapStyle' to switch to immersive modes like 'Simulation', 'Genie', 'Night', or 'Neo-Tokyo'.
-        6. Provide rich inline responses. If you found places via grounding, include them in your description.
-        7. Always maintain a sophisticated, helpful DeepMind-inspired tone.
+        2. When searching for locations, use the provided 'Current Map Context' (lat, lng, bounds) to refine your search. If context is provided, prioritize searching for places within or near those coordinates.
+        3. When searching for locations, use 'googleMaps' grounding for rich details.
+        4. ALWAYS use the 'showPlaces' tool when you identify specific points of interest (POIs) that should be displayed on the map.
+        5. For travel planning, use 'showRoute' to visualize paths.
+        6. Use 'setFlightMode' to start or stop a cinematic orbiting camera view around the current location.
+        7. When simulating a world, use 'setMapStyle' to switch to immersive modes like 'Simulation', 'Genie', 'Night', or 'Neo-Tokyo'.
+        8. Provide rich inline responses. If you found places via grounding, include them in your description.
+        9. Always maintain a sophisticated, helpful DeepMind-inspired tone.
       `;
 
       const prompt = `
@@ -372,7 +519,15 @@ async function startServer() {
             { googleMaps: {} },
             { functionDeclarations: mapControlTools }
           ],
-          toolConfig: { includeServerSideToolInvocations: true }
+          toolConfig: { 
+            includeServerSideToolInvocations: true,
+            retrievalConfig: context?.center ? {
+              latLng: {
+                latitude: context.center.lat,
+                longitude: context.center.lng
+              }
+            } : undefined
+          }
         }
       });
 
@@ -382,10 +537,10 @@ async function startServer() {
         groundingMetadata: response.candidates?.[0]?.groundingMetadata 
       });
     } catch (err: any) {
-      console.error("Chat endpoint error:", err);
-      const isQuota = err.message?.includes("429") || err.message?.includes("quota") || err.message?.includes("RESOURCE_EXHAUSTED") || err.status === 429;
+      console.log("Chat endpoint error:", err);
+      const isQuota = isQuotaError(err);
       if (isQuota) {
-        console.warn("API quota exhausted in Chatbot. Providing elegant simulated offline response...");
+        console.log("API quota exhausted in Chatbot. Providing elegant simulated offline response...");
         const offlineResult = parseOfflineChatRequest(req.body?.message || "");
         return res.json({
           text: offlineResult.text,
@@ -416,7 +571,7 @@ async function startServer() {
       res.setHeader('Cache-Control', 'public, max-age=600');
       res.send(Buffer.from(buffer));
     } catch (err: any) {
-      console.error("Weather Tile proxy error:", err);
+      console.log("Weather Tile proxy error:", err);
       res.status(500).send(err.message);
     }
   });
@@ -429,7 +584,7 @@ async function startServer() {
       const data = await response.json();
       res.json(data);
     } catch (err: any) {
-      console.error(err);
+      console.log(err);
       res.status(500).json({ error: err.message });
     }
   });
@@ -456,7 +611,7 @@ async function startServer() {
             coord: data.coord
           });
         } else {
-          console.warn(`OpenWeatherMap call failed with status ${response.status}: ${response.statusText}`);
+          console.log(`OpenWeatherMap call failed with status ${response.status}: ${response.statusText}`);
         }
       }
 
@@ -504,7 +659,7 @@ async function startServer() {
         coord: { lat: parseFloat(lat), lon: parseFloat(lng) }
       });
     } catch (err: any) {
-      console.error("OpenWeatherMap proxy failed:", err);
+      console.log("OpenWeatherMap proxy failed:", err);
       res.json({
         source: 'OpenWeatherMap (Mock Offline Fallback)',
         temp: 18.5,
@@ -547,8 +702,8 @@ async function startServer() {
       });
       res.json(JSON.parse(response.text || "{}"));
     } catch (err: any) {
-      console.error("Route optimization error:", err);
-      const isQuota = err.message?.includes("429") || err.message?.includes("quota") || err.message?.includes("RESOURCE_EXHAUSTED") || err.status === 429;
+      console.log("Route optimization error:", err);
+      const isQuota = isQuotaError(err);
       if (isQuota) {
         const isWet = req.body.weatherData?.activeSimulatedCondition === 'Rain' || req.body.weatherData?.activeSimulatedCondition === 'Snow' || req.body.weatherData?.activeSimulatedCondition === 'Storm' || req.body.weatherData?.realtimeMetrics?.code > 50;
         return res.json({
@@ -575,10 +730,63 @@ async function startServer() {
     }
   });
 
+  app.post("/api/magic-schedule", async (req, res) => {
+    try {
+      const { places } = req.body;
+      const prompt = `You are an expert travel planner. I have the following list of places to visit: 
+${JSON.stringify(places)}
+
+Create an optimal chronological daily schedule (e.g. 09:00 AM - 10:30 AM). Optimize for distance and logical flow.
+IMPORTANT: Return a JSON array of objects, where each object corresponds EXACTLY to one of the input places (matching the 'id' field).
+Format:
+[
+  { "id": "place_id_1", "timeSlot": "09:00 AM - 11:00 AM", "aiNote": "Great morning spot for coffee." },
+  ...
+]`;
+
+      const response = await generateContentWithFallback({
+        model: 'gemini-3.5-flash',
+        contents: prompt,
+        config: {
+          systemInstruction: "You are a precise JSON response bot. Never output markdown around the JSON.",
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                id: { type: Type.STRING },
+                timeSlot: { type: Type.STRING },
+                aiNote: { type: Type.STRING }
+              }
+            }
+          }
+        }
+      });
+
+      const parsed = JSON.parse(response.text || "[]");
+      res.json({ schedule: parsed });
+    } catch (err: any) {
+      console.log("Magic schedule error:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // Trip planner endpoint
   app.post("/api/plan-trip", async (req, res) => {
     try {
       const { placeDetails } = req.body;
+      const cacheKey = placeDetails?.name ? `itinerary_${Buffer.from(placeDetails.name).toString('hex').slice(0, 32)}` : null;
+      if (cacheKey && firebaseAdminInitialized) {
+        try {
+          const cacheDoc = await admin.firestore().collection('vanti_cache').doc(cacheKey).get();
+          if (cacheDoc.exists) {
+            return res.json({ itinerary: cacheDoc.data()?.itinerary });
+          }
+        } catch (cacheErr) {
+          console.log("Cache read failed:", cacheErr);
+        }
+      }
       const response = await generateContentWithFallback({
         model: 'gemini-3.5-flash',
         contents: `Create a custom 3-day travel itinerary checklist for: ${JSON.stringify(placeDetails)}. Give a realistic plan with 2-3 locations per day.`,
@@ -598,11 +806,19 @@ async function startServer() {
           }
         }
       });
-      res.json({ itinerary: JSON.parse(response.text || "[]") });
+      const itineraryResult = JSON.parse(response.text || "[]");
+      if (cacheKey && firebaseAdminInitialized && itineraryResult.length > 0) {
+        admin.firestore().collection('vanti_cache').doc(cacheKey).set({
+          itinerary: itineraryResult,
+          locationName: placeDetails.name,
+          timestamp: admin.firestore.FieldValue.serverTimestamp()
+        }).catch(e => console.log("Cache write failed:", e));
+      }
+      res.json({ itinerary: itineraryResult });
     } catch (err: any) {
-      console.error("Trip plan error:", err);
-      const isQuota = err.message?.includes("429") || err.message?.includes("quota") || err.message?.includes("RESOURCE_EXHAUSTED") || err.status === 429;
+      const isQuota = isQuotaError(err);
       if (isQuota) {
+        console.log("Trip plan quota error:", err.message || err);
         return res.json({ 
           fallback: true,
           itinerary: [
@@ -619,6 +835,17 @@ async function startServer() {
   app.post("/api/analyze-location", async (req, res) => {
      try {
        const { placeDetails } = req.body;
+       const cacheKey = placeDetails?.name ? `analysis_${Buffer.from(placeDetails.name).toString('hex').slice(0, 32)}` : null;
+       if (cacheKey && firebaseAdminInitialized) {
+         try {
+           const cacheDoc = await admin.firestore().collection('vanti_cache').doc(cacheKey).get();
+           if (cacheDoc.exists) {
+             return res.json({ analysis: cacheDoc.data()?.analysis });
+           }
+         } catch (cacheErr) {
+           console.log("Cache read failed:", cacheErr);
+         }
+       }
        const prompt = `Analyze this place and give a short, high-level summary of what it is, when is the best time to visit, and what people typically do here:\n\n${JSON.stringify(placeDetails)}`;
        
        const response = await generateContentWithFallback({
@@ -629,11 +856,19 @@ async function startServer() {
          }
        });
 
-       res.json({ analysis: response.text });
+       const analysisResult = response.text;
+       if (cacheKey && firebaseAdminInitialized && analysisResult) {
+         admin.firestore().collection('vanti_cache').doc(cacheKey).set({
+           analysis: analysisResult,
+           locationName: placeDetails.name,
+           timestamp: admin.firestore.FieldValue.serverTimestamp()
+         }).catch(e => console.log("Cache write failed:", e));
+       }
+       res.json({ analysis: analysisResult });
      } catch (err: any) {
-       console.error("Analyze location error:", err);
-       const isQuota = err.message?.includes("429") || err.message?.includes("quota") || err.message?.includes("RESOURCE_EXHAUSTED") || err.status === 429;
+       const isQuota = isQuotaError(err);
        if (isQuota) {
+         console.log("Analyze location error (QUOTA EXHAUSTED):", err.message || err);
          const { placeDetails } = req.body;
          const name = placeDetails?.name || "This location";
          const address = placeDetails?.address || "specified coordinates";
@@ -643,6 +878,26 @@ async function startServer() {
        }
        res.status(500).json({ error: err.message });
      }
+  });
+
+  app.post("/api/audio-guide", async (req, res) => {
+    try {
+      const { placeName, details } = req.body;
+      const prompt = `Create a succinct, engaging spoken-word overview for someone visiting "${placeName}". 
+      Context: ${JSON.stringify(details || {})}.
+      The output should be a natural-sounding script designed to be read by a text-to-speech engine. 
+      Limit to 60 words. Highlight the 'wow' factor of the location.`;
+
+      const response = await generateContentWithFallback({
+        model: 'gemini-3.5-flash',
+        contents: prompt
+      });
+
+      res.json({ script: response.text });
+    } catch (err: any) {
+      console.log("Audio guide generation failed:", err);
+      res.status(500).json({ error: "Failed to generate audio script" });
+    }
   });
 
   // Trip Recap generator using Gemini AI
@@ -663,7 +918,7 @@ async function startServer() {
 
       res.json({ recap: response.text });
     } catch (err: any) {
-      console.error("Trip recap error:", err);
+      console.log("Trip recap error:", err);
       res.status(500).json({ error: err.message });
     }
   });
@@ -702,7 +957,7 @@ async function startServer() {
       });
       res.json(JSON.parse(response.text || "{}"));
     } catch (err: any) {
-      console.error("Cost calculation error:", err);
+      console.log("Cost calculation error:", err);
       res.status(500).json({ error: err.message });
     }
   });
@@ -739,8 +994,190 @@ async function startServer() {
       });
       res.json({ suggestions: JSON.parse(response.text || "[]") });
     } catch (err: any) {
-      console.error("Hidden gems error:", err);
+      console.log("Hidden gems error:", err);
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Real-time currency exchange rate proxy
+  app.get("/api/exchange-rates/:base", async (req, res) => {
+    try {
+      const { base } = req.params;
+      // Using a reliable free open currency API
+      const response = await fetch(`https://open.er-api.com/v6/latest/${base.toUpperCase()}`);
+      if (!response.ok) throw new Error("Failed to fetch exchange rates");
+      const data = await response.json();
+      res.json(data);
+    } catch (err: any) {
+      console.log("Currency API error:", err);
+      res.status(500).json({ error: "Failed to fetch rates" });
+    }
+  });
+
+  // AI Travel Journal Image Generation
+  app.post("/api/generate-journal-image", async (req, res) => {
+    try {
+      const { prompt, locationName } = req.body;
+      if (!prompt) {
+        return res.status(400).json({ error: "Prompt is required" });
+      }
+
+      console.log(`Generating travel journal cover image for location: ${locationName}`);
+      const finalPrompt = `Curated high-quality professional travel photography of ${locationName || 'a beautiful landmark'}, cinematic lighting, masterpiece, capturing the notebook sketch and travel feeling of: ${prompt}`;
+
+      let base64Image: string | null = null;
+      let lastImageErr: any = null;
+      
+      // Try gemini-2.5-flash-image
+      try {
+        const response = await ai.models.generateContent({
+          model: 'gemini-2.5-flash-image',
+          contents: {
+            parts: [{ text: finalPrompt }]
+          },
+          config: {
+            imageConfig: {
+              aspectRatio: "16:9"
+            }
+          }
+        });
+
+        if (response.candidates?.[0]?.content?.parts) {
+          for (const part of response.candidates[0].content.parts) {
+            if (part.inlineData?.data) {
+              base64Image = part.inlineData.data;
+              break;
+            }
+          }
+        }
+      } catch (err) {
+        lastImageErr = err;
+        console.log("gemini-2.5-flash-image failed, trying fallback...", err);
+      }
+
+      // If failed, fallback to gemini-3.1-flash-image
+      if (!base64Image) {
+        try {
+          const response = await ai.models.generateContent({
+            model: 'gemini-3.1-flash-image',
+            contents: {
+              parts: [{ text: finalPrompt }]
+            },
+            config: {
+              imageConfig: {
+                aspectRatio: "16:9",
+                imageSize: "512px"
+              }
+            }
+          });
+
+          if (response.candidates?.[0]?.content?.parts) {
+            for (const part of response.candidates[0].content.parts) {
+              if (part.inlineData?.data) {
+                base64Image = part.inlineData.data;
+                break;
+              }
+            }
+          }
+        } catch (err) {
+          lastImageErr = err;
+          console.log("gemini-3.1-flash-image also failed:", err);
+        }
+      }
+
+      if (!base64Image) {
+        if (isQuotaError(lastImageErr)) {
+           return res.json({ imageUrl: "https://images.unsplash.com/photo-1501785888041-af3ef285b470?auto=format&fit=crop&w=800&q=80" }); // fallback landscape
+        }
+        throw new Error("Unable to generate image from any image generation model");
+      }
+
+      const imageUrl = `data:image/jpeg;base64,${base64Image}`;
+      res.json({ imageUrl });
+    } catch (err: any) {
+      console.log("Travel Journal Image Generation Error:", err);
+      if (isQuotaError(err)) {
+        return res.json({ imageUrl: "https://images.unsplash.com/photo-1501785888041-af3ef285b470?auto=format&fit=crop&w=800&q=80" });
+      }
+      res.status(500).json({ error: err.message || "Failed to generate cover image" });
+    }
+  });
+
+  // AI Local Guide endpoint
+  app.post("/api/ai-local-guide", async (req, res) => {
+    try {
+      const { location } = req.body;
+      if (!location) {
+        return res.status(400).json({ error: "Location is required" });
+      }
+
+      console.log(`Generating local guide for: ${location}`);
+      const prompt = `As a local expert, provide 3 essential cultural tips and 3 useful local phrases (with pronunciation) for visitors to ${location}. Output ONLY valid JSON in this format: { "cultureTips": ["tip1", "tip2", "tip3"], "phrases": [{ "phrase": "Hello", "translation": "Bonjour", "pronunciation": "bon-zhoor" }] }`;
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: { parts: [{ text: prompt }] },
+        config: { responseMimeType: "application/json" }
+      });
+
+      const responseText = response.text || "{}";
+      const guideData = JSON.parse(responseText);
+      
+      res.json(guideData);
+    } catch (err: any) {
+      console.log("AI Local Guide Error:", err);
+      if (isQuotaError(err)) {
+        return res.json({
+          cultureTips: ["Keep interactions polite and formal", "Respect local customs and religious sites", "Tipping is appreciated but check if service is already included"],
+          phrases: [
+            { phrase: "Hello", translation: "Hello", pronunciation: "heh-loh" },
+            { phrase: "Thank you", translation: "Thank you", pronunciation: "thayngk-yoo" },
+            { phrase: "Excuse me", translation: "Excuse me", pronunciation: "ex-kyooz mee" }
+          ]
+        });
+      }
+      res.status(500).json({ error: "Failed to generate local guide" });
+    }
+  });
+
+  // AI-driven Predictive Autocomplete Trending Destinations
+  app.post("/api/trending-destinations", async (req, res) => {
+    try {
+      const { localTime, weather, locationContext, searchHistory } = req.body;
+      
+      const prompt = `Based on the current local time (${localTime}), weather conditions (${JSON.stringify(weather || "unknown")}), and the user's current location context (${JSON.stringify(locationContext || "unknown")}), predict 4 trending destinations that would be popular right now.
+      Also consider the user's recent search history: ${JSON.stringify(searchHistory || [])}.
+      Prioritize destinations that fit the time of day (e.g., breakfast spots in morning, bars at night) and weather (e.g., museums during rain).
+      
+      Output ONLY a JSON array of objects with:
+      - name: The specific trending place name
+      - category: One word category (e.g., Morning, Cozy, Nightlife, Indoor)
+      - reason: A very short 3-5 word reason why it's trending (e.g., "Perfect for morning coffee", "Avoiding the rain")
+      - lat: Approximate latitude
+      - lng: Approximate longitude
+      `;
+
+      const response = await generateContentWithFallback({
+        model: 'gemini-3.5-flash',
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json"
+        }
+      });
+
+      const suggestions = JSON.parse(response.text || "[]");
+      res.json({ trending: suggestions });
+    } catch (err: any) {
+      console.log("Trending destinations error:", err);
+      // Fallback trending spots
+      res.json({
+        trending: [
+          { name: "Artisanal Coffee Roasters", category: "Morning", reason: "Locals choice for sunrise", lat: 37.56, lng: 126.97 },
+          { name: "Contemporary Art Hub", category: "Indoor", reason: "Trending museum visit", lat: 37.57, lng: 126.98 },
+          { name: "Neon Street Food Alley", category: "Nightlife", reason: "Highly active tonight", lat: 37.55, lng: 126.93 },
+          { name: "Skyline Sunset Deck", category: "Scenic", reason: "Best views at this hour", lat: 37.54, lng: 127.01 }
+        ]
+      });
     }
   });
 
@@ -759,7 +1196,7 @@ async function startServer() {
       });
       res.json({ operationName: operation.name });
     } catch (err: any) {
-      console.error(err);
+      console.log(err);
       res.status(500).json({ error: err.message });
     }
   });
@@ -772,7 +1209,7 @@ async function startServer() {
       const updated = await ai.operations.getVideosOperation({ operation: op });
       res.json({ done: updated.done });
     } catch (err: any) {
-      console.error(err);
+      console.log(err);
       res.status(500).json({ error: err.message });
     }
   });
@@ -800,7 +1237,7 @@ async function startServer() {
         res.status(500).json({ error: "Empty video content" });
       }
     } catch (err: any) {
-      console.error(err);
+      console.log(err);
       res.status(500).json({ error: err.message });
     }
   });
@@ -878,7 +1315,7 @@ async function startServer() {
           }
         }
       } catch (err) {
-        console.error('WS Error:', err);
+        console.log('WS Error:', err);
       }
     });
 

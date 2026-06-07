@@ -76,6 +76,35 @@ export function SnowEffect() {
   );
 }
 
+export function FogEffect() {
+  return (
+    <div className="absolute inset-0 pointer-events-none z-10 overflow-hidden">
+      <div className="absolute inset-0 bg-slate-400/10 mix-blend-overlay"></div>
+      <div className="fog-container absolute inset-0">
+        {[...Array(6)].map((_, i) => (
+          <motion.div
+            key={i}
+            initial={{ x: '-100%', opacity: 0.2 }}
+            animate={{ x: '100%' }}
+            transition={{
+              duration: 20 + Math.random() * 10,
+              repeat: Infinity,
+              delay: i * -5,
+              ease: "linear"
+            }}
+            className="absolute h-full w-[200%] opacity-30"
+            style={{
+              top: `${(i % 3) * 30}%`,
+              background: `radial-gradient(ellipse at center, rgba(226, 232, 240, 0.4) 0%, transparent 70%)`,
+              filter: 'blur(60px)'
+            }}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function WeatherEffects({ weather, activeWeather, mapTheme }: { 
   weather?: any; 
   activeWeather?: string | null;
@@ -86,7 +115,13 @@ export default function WeatherEffects({ weather, activeWeather, mapTheme }: {
   const isCosmic = mapTheme === 'Cosmic';
   const isNeoTokyo = mapTheme === 'Neo-Tokyo';
 
-  const condition = activeWeather || (weather?.current?.weather_code > 50 ? (weather?.current?.weather_code < 70 ? 'Rain' : 'Snow') : null);
+  const condition = activeWeather || (
+    weather?.main === 'Rain' || weather?.main === 'Drizzle' ? 'Rain' :
+    weather?.main === 'Snow' ? 'Snow' :
+    weather?.main === 'Thunderstorm' ? 'Storm' :
+    weather?.main === 'Fog' || weather?.main === 'Mist' || weather?.main === 'Haze' ? 'Fog' :
+    (weather?.current?.weather_code > 50 ? (weather?.current?.weather_code < 70 ? 'Rain' : 'Snow') : weather?.current?.weather_code > 40 ? 'Fog' : null)
+  );
 
   return (
     <div className="absolute inset-0 pointer-events-none z-20 overflow-hidden mix-blend-screen">
@@ -212,6 +247,7 @@ export default function WeatherEffects({ weather, activeWeather, mapTheme }: {
       {/* Standard Rain/Snow based on actual weather or command */}
       {(condition === 'Rain' || condition === 'Storm') && <RainEffect />}
       {condition === 'Snow' && <SnowEffect />}
+      {condition === 'Fog' && <FogEffect />}
       {condition === 'Storm' && (
         <motion.div 
             animate={{ opacity: [0, 0.8, 0, 0.4, 0] }}

@@ -46,7 +46,9 @@ service cloud.firestore {
         && (!('address' in data) || (data.address is string && data.address.size() <= 500))
         && (!('lat' in data) || (data.lat is number))
         && (!('lng' in data) || (data.lng is number))
-        && (data.savedAt is number);
+        && (data.savedAt is number)
+        && (!('journalNotes' in data) || (data.journalNotes is string && data.journalNotes.size() <= 10000))
+        && (!('journalImages' in data) || (data.journalImages is list && data.journalImages.size() <= 10 && (data.journalImages.size() == 0 || data.journalImages[0] is string)));
     }
 
     function isValidChatMessage(data) {
@@ -88,6 +90,16 @@ service cloud.firestore {
         && data.updatedAt is number;
     }
 
+    function isValidUserLocation(data) {
+      return data.uid is string && data.uid.size() <= 128
+        && data.uid == request.auth.uid
+        && data.lat is number
+        && data.lng is number
+        && data.updatedAt is number
+        && (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 100))
+        && (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 500));
+    }
+
     // Collection Route Bindings
     match /users/{userId} {
       allow get: if isSignedIn() && request.auth.uid == userId;
@@ -119,6 +131,11 @@ service cloud.firestore {
         allow create: if isSignedIn() && request.auth.uid == userId && isValidId(messageId) && isValidChatMessage(incoming());
         allow update, delete: if false;
       }
+    }
+
+    match /userLocations/{userId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && request.auth.uid == userId && isValidUserLocation(incoming());
     }
 
     match /travelSnapshots/{snapshotId} {

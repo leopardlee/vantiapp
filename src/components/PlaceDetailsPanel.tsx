@@ -1,16 +1,19 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { ArrowLeft, MapPin, Star, Phone, Globe, Clock, Navigation, Sparkles, Bookmark, UserCircle, Share2, Award, Zap, X, Calendar, Compass, Eye, Info, Sliders, ThumbsUp, ThumbsDown, Volume2, Timer, ChevronDown, ChevronUp, ChevronRight, Check, Loader2, Plus, BookOpen, Camera, Trash2, Edit } from 'lucide-react';
+import { ArrowLeft, MapPin, Star, Phone, Globe, Clock, Navigation, Sparkles, Bookmark, UserCircle, Share2, Award, Zap, X, Calendar, Compass, Eye, Info, Sliders, ThumbsUp, ThumbsDown, Volume2, Timer, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Check, Loader2, Plus, BookOpen, Camera, Trash2, Edit, Tag } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import FocusLock from 'react-focus-lock';
 import { cn } from '../lib/utils';
 import { useMapsLibrary } from '@vis.gl/react-google-maps';
 import { User } from 'firebase/auth';
 import { doc, getDoc, setDoc, deleteDoc, collection, query, orderBy, onSnapshot } from 'firebase/firestore';
-import { db } from '../lib/firebase';
+import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import * as d3 from 'd3';
 import { useVantiStore } from '../store/vantiStore';
 import { Skeleton, SkeletonCircle, SkeletonText } from './common/Skeleton';
 import { SpeakButton } from './common/SpeakButton';
+import { RouteComparison } from './RouteComparison';
+import TrafficDeparturePredictor from './TrafficDeparturePredictor';
+import FinanceTracker from './FinanceTracker';
 
 const TaskListItem = ({ loc, key }: { loc: string; key?: any }) => {
   const [done, setDone] = useState(false);
@@ -35,6 +38,7 @@ interface PlaceDetailsPanelProps {
   isRoutingOrigin?: boolean;
   user: User | null;
   weather?: string | null;
+  userLocation?: { lat: number, lng: number } | null;
 }
 
 // Sparkline component that uses D3.js to render a tiny popularity trend over the last 6 hours
@@ -170,11 +174,108 @@ function VantiGeometricLoader({ color = "#f43f5e" }: { color?: string }) {
   );
 }
 
-const PlaceDetailsPanel = React.memo(function PlaceDetailsPanel({ place, onBack, onClose, onShowRoute, onSetRoutingOrigin, isRoutingOrigin, user, weather }: PlaceDetailsPanelProps) {
+const PlaceDetailsPanel = React.memo(function PlaceDetailsPanel({ place, onBack, onClose, onShowRoute, onSetRoutingOrigin, isRoutingOrigin, user, weather, userLocation }: PlaceDetailsPanelProps) {
   const [analysis, setAnalysis] = useState<string | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [showSaveToast, setShowSaveToast] = useState(false);
+
+  // Travel Journal State
+  const [savedPlaceData, setSavedPlaceData] = useState<any | null>(null);
+  const [journalNotesInput, setJournalNotesInput] = useState('');
+  const [selectedEmoji, setSelectedEmoji] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (savedPlaceData?.customEmoji) {
+      setSelectedEmoji(savedPlaceData.customEmoji);
+    } else {
+      setSelectedEmoji(null);
+    }
+  }, [savedPlaceData]);
+
+  const handleEmojiSave = async (emoji: string) => {
+    if (!user || !place?.id) return;
+    try {
+      setSelectedEmoji(emoji);
+      const docRef = doc(db, 'users', user.uid, 'savedPlaces', place.id);
+      await setDoc(docRef, { customEmoji: emoji }, { merge: true });
+      triggerHaptic('success');
+    } catch (e) {
+      console.error("Error saving emoji category:", e);
+    }
+  };
+  const [promptInput, setPromptInput] = useState('');
+  const [isGeneratingCover, setIsGeneratingCover] = useState(false);
+  const [isSavingJournal, setIsSavingJournal] = useState(false);
+  const [isGeneratingAudio, setIsGeneratingAudio] = useState(false);
+
+  const handlePlayAudioGuide = async () => {
+    if (isGeneratingAudio) return;
+    setIsGeneratingAudio(true);
+    triggerHaptic('tap');
+    
+    try {
+      const res = await fetch('/api/audio-guide', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          placeName: place.displayName, 
+          details: { 
+            types: place.types, 
+            rating: place.rating, 
+            address: place.formattedAddress 
+          } 
+        })
+      });
+      
+      const data = await res.json();
+      if (data.script) {
+        const utterance = new SpeechSynthesisUtterance(data.script);
+        utterance.rate = 1.0;
+        utterance.pitch = 1.0;
+        const voices = window.speechSynthesis.getVoices();
+        const preferredVoice = voices.find(v => v.name.includes('Google') || v.name.includes('Premium')) || voices[0];
+        if (preferredVoice) utterance.voice = preferredVoice;
+        
+        window.speechSynthesis.speak(utterance);
+        triggerHaptic('success');
+      }
+    } catch (e) {
+      console.error("Audio guide error:", e);
+    } finally {
+      setIsGeneratingAudio(false);
+    }
+  };
+
+  // Gallery Active Photo Index
+  const [activePhotoIndex, setActivePhotoIndex] = useState(0);
+
+  // AI Local Guide State
+  const [localGuideData, setLocalGuideData] = useState<any | null>(null);
+  const [isLoadingLocalGuide, setIsLoadingLocalGuide] = useState(false);
+
+  useEffect(() => {
+    setActivePhotoIndex(0);
+  }, [place?.id]);
+
+  const loadLocalGuide = async () => {
+    if (!place?.name && !place?.displayName) return;
+    const locationName = place.displayName || place.name;
+    setIsLoadingLocalGuide(true);
+    try {
+      const response = await fetch('/api/ai-local-guide', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ location: locationName })
+      });
+      const data = await response.json();
+      setLocalGuideData(data);
+    } catch (e) {
+      console.error("Local Guide Error:", e);
+    } finally {
+      setIsLoadingLocalGuide(false);
+    }
+  };
 
   // Visited Journal Log State & Handlers
   const [matchingSnap, setMatchingSnap] = useState<any | null>(null);
@@ -411,10 +512,9 @@ const PlaceDetailsPanel = React.memo(function PlaceDetailsPanel({ place, onBack,
 
   const isMock = !place.fetchFields && typeof place.mode === 'string';
 
-  // State-based cache for the current session
-  const [analysisCache, setAnalysisCache] = useState<Record<string, string>>({});
+  // Use a ref for the cache to prevent redundant re-renders just for caching
+  const analysisCacheRef = useRef<Record<string, string>>({});
 
-  // (Firebase check removed)
   useEffect(() => {
     // For mock places we already have custom metadata. Otherwise we can analyze.
     if (isMock) {
@@ -429,9 +529,15 @@ const PlaceDetailsPanel = React.memo(function PlaceDetailsPanel({ place, onBack,
     }
 
     // Use cache if available to save quota
-    if (place.id && analysisCache[place.id]) {
-      setAnalysis(analysisCache[place.id]);
+    if (place.id && analysisCacheRef.current[place.id]) {
+      setAnalysis(analysisCacheRef.current[place.id]);
       return;
+    }
+
+    // Don't restart analysis if we already have it for this specific place ID
+    if (analysis && !analyzing && place.id) {
+        // Double check if the analysis we have matches some keyword or fallback text
+        // If it's real content, we can probably skip.
     }
 
     const abortController = new AbortController();
@@ -448,22 +554,24 @@ const PlaceDetailsPanel = React.memo(function PlaceDetailsPanel({ place, onBack,
           signal: abortController.signal
         });
         
+        const data = await res.json().catch(() => ({}));
+        
         if (!res.ok) {
-          const data = await res.json().catch(() => ({}));
-          setAnalysis(data.error || "Detailed analysis is currently unavailable as Google Gemini API quota limits have been exceeded. Please try again in a few moments.");
+          setAnalysis(data.analysis || data.error || "Detailed analysis is currently unavailable as Google Gemini API quota limits have been exceeded. Please try again in a few moments.");
           return;
         }
         
-        const data = await res.json();
         if (data.analysis) {
           setAnalysis(data.analysis);
-          setAnalysisCache(prev => ({ ...prev, [place.id]: data.analysis }));
+          // Store in ref to avoid triggering another re-render immediately
+          analysisCacheRef.current[place.id] = data.analysis;
         } else {
           setAnalysis("Detailed analysis is temporarily unavailable.");
         }
       } catch (err: any) {
         if (err.name !== 'AbortError') {
           console.error("Analysis failed:", err);
+          setAnalysis("Network error occurred during analysis.");
         }
       } finally {
         setAnalyzing(false);
@@ -490,17 +598,110 @@ const PlaceDetailsPanel = React.memo(function PlaceDetailsPanel({ place, onBack,
     };
   };
 
-  // Removed Firebase isSaved local state, utilizing useVantiStore instead
+  // Removed Firebase isSaved local state, utilizing useVantiStore + Firestore instead
   const bookmarkedPlaces = useVantiStore((state) => state.bookmarkedPlaces);
   const toggleBookmark = useVantiStore((state) => state.toggleBookmark);
   const isSavedLocally = !!bookmarkedPlaces[place?.id];
+  const [isBookmarkedInFirestore, setIsBookmarkedInFirestore] = useState(false);
+
+  useEffect(() => {
+    if (!user || !place?.id) {
+      setIsBookmarkedInFirestore(false);
+      setSavedPlaceData(null);
+      return;
+    }
+    const docRef = doc(db, 'users', user.uid, 'savedPlaces', place.id);
+    const unsub = onSnapshot(docRef, (docSnap) => {
+      const exists = docSnap.exists();
+      setIsBookmarkedInFirestore(exists);
+      setSavedPlaceData(exists ? docSnap.data() : null);
+    }, (err) => {
+      console.warn("Could not fetch bookmark status from Firestore:", err);
+    });
+    return () => unsub();
+  }, [user, place?.id]);
+
+  useEffect(() => {
+    if (savedPlaceData) {
+      setJournalNotesInput(savedPlaceData.journalNotes || '');
+    } else {
+      setJournalNotesInput('');
+    }
+  }, [savedPlaceData, place?.id]);
+
+  const saveJournalNotes = async () => {
+    if (!user || !place?.id) return;
+    setIsSavingJournal(true);
+    try {
+      const docRef = doc(db, 'users', user.uid, 'savedPlaces', place.id);
+      await setDoc(docRef, {
+        journalNotes: journalNotesInput
+      }, { merge: true });
+    } catch (e) {
+      console.error("Error saving journal notes:", e);
+    } finally {
+      setIsSavingJournal(false);
+    }
+  };
+
+  const generateJournalImage = async () => {
+    if (!promptInput.trim() || !user || !place?.id) return;
+    setIsGeneratingCover(true);
+    try {
+      const response = await fetch('/api/generate-journal-image', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          prompt: promptInput,
+          locationName: place.displayName || place.name || 'this location'
+        })
+      });
+      const data = await response.json();
+      if (data.error) {
+        throw new Error(data.error);
+      }
+
+      const newImgUrl = data.imageUrl;
+      const existingImages = savedPlaceData?.journalImages || [];
+      const updatedImages = [...existingImages, newImgUrl];
+
+      const docRef = doc(db, 'users', user.uid, 'savedPlaces', place.id);
+      await setDoc(docRef, {
+        journalImages: updatedImages
+      }, { merge: true });
+
+      setPromptInput('');
+    } catch (e) {
+      console.error("Error generating journal cover:", e);
+    } finally {
+      setIsGeneratingCover(false);
+    }
+  };
+
+  const deleteJournalImage = async (imgToDelete: string) => {
+    if (!user || !place?.id) return;
+    try {
+      const existingImages = savedPlaceData?.journalImages || [];
+      const updatedImages = existingImages.filter((img: string) => img !== imgToDelete);
+      const docRef = doc(db, 'users', user.uid, 'savedPlaces', place.id);
+      await setDoc(docRef, {
+        journalImages: updatedImages
+      }, { merge: true });
+    } catch (e) {
+      console.error("Error deleting journal image:", e);
+    }
+  };
+
+  const isSaved = user ? isBookmarkedInFirestore : isSavedLocally;
 
   const handleSave = async () => {
-    if (!place.id || isSaving) return;
+    if (!place?.id || isSaving) return;
 
     if (typeof navigator !== 'undefined' && navigator.vibrate) {
       try {
-        if (isSavedLocally) {
+        if (isSaved) {
           navigator.vibrate([20, 50, 20]);
         } else {
           navigator.vibrate([50, 50, 50, 50, 100]);
@@ -511,13 +712,41 @@ const PlaceDetailsPanel = React.memo(function PlaceDetailsPanel({ place, onBack,
     setIsSaving(true);
     
     try {
-      toggleBookmark(place);
-      if (!isSavedLocally) {
-        setShowSaveToast(true);
-        setTimeout(() => setShowSaveToast(false), 3000);
+      if (user) {
+        const docRef = doc(db, 'users', user.uid, 'savedPlaces', place.id);
+        if (isBookmarkedInFirestore) {
+          await deleteDoc(docRef);
+        } else {
+          const finalLat = Number(place.lat || place.location?.lat || 0);
+          const finalLng = Number(place.lng || place.location?.lng || 0);
+          const finalDisplayName = place.displayName || place.name || `Coordinates (${finalLat.toFixed(4)}, ${finalLng.toFixed(4)})`;
+          const finalAddress = place.formattedAddress || place.address || '';
+          
+          await setDoc(docRef, {
+            placeId: place.id,
+            displayName: finalDisplayName,
+            address: finalAddress,
+            lat: finalLat,
+            lng: finalLng,
+            savedAt: Date.now()
+          });
+          setShowSaveToast(true);
+          setTimeout(() => setShowSaveToast(false), 3000);
+        }
+      } else {
+        toggleBookmark(place);
+        const latestBookmarks = useVantiStore.getState().bookmarkedPlaces;
+        const savedLocallyNow = !!latestBookmarks[place.id];
+        if (savedLocallyNow) {
+          setShowSaveToast(true);
+          setTimeout(() => setShowSaveToast(false), 3000);
+        }
       }
     } catch (err) {
       console.error("Save error", err);
+      if (user) {
+        handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}/savedPlaces/${place.id}`);
+      }
     } finally {
       setIsSaving(false);
     }
@@ -640,6 +869,39 @@ const PlaceDetailsPanel = React.memo(function PlaceDetailsPanel({ place, onBack,
     }
   };
 
+  const getPhotos = () => {
+    if (isMock) {
+      return place?.imageUrl ? [place.imageUrl] : [];
+    }
+    if (place?.photos && place.photos.length > 0) {
+      return place.photos.map((photo: any) => {
+        if (typeof photo.getURI === 'function') {
+          return photo.getURI({ maxWidth: 800 });
+        }
+        return photo.url || photo;
+      });
+    }
+    return [];
+  };
+
+  const photos = getPhotos();
+
+  const handleNextPhoto = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (photos.length === 0) return;
+    setActivePhotoIndex((prev) => (prev + 1) % photos.length);
+    triggerHaptic('tap');
+  };
+
+  const handlePrevPhoto = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (photos.length === 0) return;
+    setActivePhotoIndex((prev) => (prev - 1 + photos.length) % photos.length);
+    triggerHaptic('tap');
+  };
+
   return (
     <FocusLock returnFocus className="contents">
     <motion.div 
@@ -687,10 +949,10 @@ const PlaceDetailsPanel = React.memo(function PlaceDetailsPanel({ place, onBack,
             }}
             className={cn(
               "w-11 h-11 flex items-center justify-center rounded-xl transition-all border active:scale-90",
-               isSavedLocally ? "bg-amber-500/10 text-amber-500 border-amber-500/30" : "bg-white/5 text-slate-400 hover:text-white border-transparent"
+              isSaved ? "bg-amber-500/10 text-amber-500 border-amber-500/30" : "bg-white/5 text-slate-400 hover:text-white border-transparent"
             )}
           >
-            <Bookmark className={cn("w-5 h-5", isSavedLocally && "fill-current")} />
+            <Bookmark className={cn("w-5 h-5", isSaved && "fill-current")} />
           </button>
           {onClose && (
             <button 
@@ -715,33 +977,100 @@ const PlaceDetailsPanel = React.memo(function PlaceDetailsPanel({ place, onBack,
           className="flex-1 overflow-y-auto px-6 py-6 pb-[calc(6rem+env(safe-area-inset-bottom,0px))] scrollbar-thin scrollbar-thumb-slate-700"
         >
           
-          <motion.div variants={item} className="w-full h-48 bg-slate-800 rounded-xl mb-6 relative overflow-hidden group">
-            <div className="absolute inset-0 bg-gradient-to-t from-[#14171d] via-black/40 to-transparent z-10"></div>
-            {isMock && place.imageUrl ? (
-              <img 
-                src={place.imageUrl} 
-                alt={place.displayName}
-                className="absolute inset-0 w-full h-full object-cover"
-              />
-            ) : !isMock && place.photos && place.photos.length > 0 ? (
-              <div className="flex w-full h-full overflow-x-auto snap-x snap-mandatory scrollbar-none">
-                {place.photos.map((photo: any, index: number) => (
-                  <img 
-                    key={index}
-                    src={photo.getURI({ maxWidth: 600 })} 
-                    alt={place.displayName || 'Location'}
-                    referrerPolicy="no-referrer"
-                    className="w-full h-full object-cover shrink-0 snap-center"
-                  />
-                ))}
-              </div>
+          <motion.div variants={item} className="w-full h-52 bg-slate-900 rounded-2xl mb-6 relative overflow-hidden group border border-white/5 shadow-2xl touch-pan-y">
+            {photos.length > 0 ? (
+              <>
+                <div className="absolute inset-0 select-none">
+                  <AnimatePresence initial={false} mode="wait">
+                    <motion.img 
+                      key={activePhotoIndex}
+                      src={photos[activePhotoIndex]} 
+                      alt={place.displayName || 'Location Photo'}
+                      initial={{ opacity: 0, x: 20, scale: 1.02 }}
+                      animate={{ opacity: 1, x: 0, scale: 1 }}
+                      exit={{ opacity: 0, x: -20, scale: 0.98 }}
+                      transition={{ type: "spring", stiffness: 350, damping: 28 }}
+                      className="absolute inset-0 w-full h-full object-cover pointer-events-none"
+                      referrerPolicy="no-referrer"
+                    />
+                  </AnimatePresence>
+                </div>
+
+                {/* Ambient dark gradient overlay to make tags readable */}
+                <div className="absolute inset-x-0 bottom-0 h-2/3 bg-gradient-to-t from-[#0e1115] via-black/30 to-transparent z-10 pointer-events-none" />
+
+                {/* Carousel Controls */}
+                {photos.length > 1 && (
+                  <>
+                    {/* Gesture Wipe Overlay Area */}
+                    <div 
+                      className="absolute inset-0 z-15 cursor-grab active:cursor-grabbing"
+                      onTouchStart={(e) => {
+                        const touch = e.touches[0];
+                        (e.currentTarget as any).startX = touch.clientX;
+                      }}
+                      onTouchEnd={(e) => {
+                        const startX = (e.currentTarget as any).startX;
+                        if (startX === undefined) return;
+                        const touch = e.changedTouches[0];
+                        const diffX = touch.clientX - startX;
+                        if (diffX > 50) {
+                          setActivePhotoIndex((prev) => (prev - 1 + photos.length) % photos.length);
+                          triggerHaptic('tap');
+                        } else if (diffX < -50) {
+                          setActivePhotoIndex((prev) => (prev + 1) % photos.length);
+                          triggerHaptic('tap');
+                        }
+                      }}
+                    />
+
+                    {/* Left Chevron Button */}
+                    <button
+                      onClick={handlePrevPhoto}
+                      className="absolute left-3 top-1/2 -translate-y-1/2 z-20 w-8 h-8 flex items-center justify-center rounded-full bg-slate-950/75 border border-white/10 text-white/80 hover:text-white hover:bg-slate-950 hover:scale-110 active:scale-90 transition-all opacity-100 md:opacity-0 md:group-hover:opacity-100 shadow-lg pointer-events-auto"
+                      aria-label="Previous Photo"
+                    >
+                      <ChevronLeft className="w-5 h-5" />
+                    </button>
+
+                    {/* Right Chevron Button */}
+                    <button
+                      onClick={handleNextPhoto}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 z-20 w-8 h-8 flex items-center justify-center rounded-full bg-slate-950/75 border border-white/10 text-white/80 hover:text-white hover:bg-slate-950 hover:scale-110 active:scale-90 transition-all opacity-100 md:opacity-0 md:group-hover:opacity-100 shadow-lg pointer-events-auto"
+                      aria-label="Next Photo"
+                    >
+                      <ChevronRight className="w-5 h-5" />
+                    </button>
+
+                    {/* Indication Dots */}
+                    <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1 bg-slate-950/65 px-2 py-1 rounded-full border border-white/5 backdrop-blur-sm pointer-events-auto">
+                      {photos.map((_, idx) => (
+                        <button
+                          key={`carousel-dot-${idx}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            e.preventDefault();
+                            setActivePhotoIndex(idx);
+                            triggerHaptic('tap');
+                          }}
+                          className={cn(
+                            "w-1.5 h-1.5 rounded-full transition-all duration-300",
+                            idx === activePhotoIndex ? "bg-white w-3" : "bg-white/40 hover:bg-white/60"
+                          )}
+                          aria-label={`Go to photo ${idx + 1}`}
+                        />
+                      ))}
+                    </div>
+                  </>
+                )}
+              </>
             ) : (
-              <div className="absolute inset-0 flex items-center justify-center opacity-30">
+              <div className="absolute inset-0 flex items-center justify-center opacity-30 bg-slate-950">
                  <MapPin className="w-16 h-16 text-slate-500" />
               </div>
             )}
             
-            <div className="absolute bottom-4 left-4 z-20">
+            <div className="absolute bottom-3 left-4 z-20">
                <span className="inline-block px-2.5 py-1 bg-rose-500/20 text-rose-400 text-xs font-semibold rounded-md backdrop-blur-sm border border-rose-500/30">
                  {getPrimaryType()}
                </span>
@@ -751,6 +1080,35 @@ const PlaceDetailsPanel = React.memo(function PlaceDetailsPanel({ place, onBack,
           <motion.h2 variants={item} className="text-2xl font-display font-bold text-white mb-2 leading-tight">
             {place.displayName}
           </motion.h2>
+
+          {/* Audio Guide Primary Action */}
+          <motion.div variants={item} className="mb-6">
+            <button
+               onClick={handlePlayAudioGuide}
+               disabled={isGeneratingAudio}
+               className={cn(
+                 "w-full py-3.5 rounded-2xl flex items-center justify-center gap-3 transition-all duration-500 group relative overflow-hidden",
+                 isGeneratingAudio 
+                   ? "bg-slate-800 text-slate-500 cursor-not-allowed" 
+                   : "bg-gradient-to-r from-indigo-600 via-indigo-500 to-indigo-600 bg-[length:200%_auto] hover:bg-[right_center] text-white shadow-xl shadow-indigo-500/20 active:scale-95"
+               )}
+            >
+              <div className="relative z-10 flex items-center gap-3">
+                {isGeneratingAudio ? (
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                ) : (
+                  <Volume2 className={cn("w-5 h-5", !isGeneratingAudio && "animate-pulse")} />
+                )}
+                <span className="text-xs font-black uppercase tracking-widest">
+                  {isGeneratingAudio ? "Calibrating Audio Stream..." : "AI Location Audio Guide"}
+                </span>
+              </div>
+              
+              {!isGeneratingAudio && (
+                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent -translate-x-full group-hover:animate-[shimmer_2s_infinite]" />
+              )}
+            </button>
+          </motion.div>
 
           {/* Visited Journal Memory Section */}
           <motion.div 
@@ -926,6 +1284,57 @@ const PlaceDetailsPanel = React.memo(function PlaceDetailsPanel({ place, onBack,
               </div>
             )}
           </motion.div>
+
+          {/* Emoji Categorization */}
+          {isSaved && (
+            <motion.div variants={item} className="mb-6 p-4 rounded-2xl bg-slate-800/40 border border-slate-700/50 shadow-inner">
+               <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-2">
+                     <Tag className="w-4 h-4 text-indigo-400" />
+                     <h4 className="text-[11px] font-black uppercase tracking-widest text-slate-300">Marker Customization</h4>
+                  </div>
+                  {selectedEmoji && (
+                    <button 
+                      onClick={() => handleEmojiSave('')}
+                      className="text-[9px] text-slate-500 hover:text-slate-300 font-bold uppercase transition-colors"
+                    >
+                      Reset
+                    </button>
+                  )}
+               </div>
+               
+               <div className="flex flex-wrap gap-2.5">
+                  {['🍴', '☕', '🏕️', '🏛️', '🛍️', '🏨', '🏖️', '📸', '🚉', '🌳', '📍'].map((emoji) => (
+                    <button
+                      key={emoji}
+                      onClick={() => handleEmojiSave(emoji)}
+                      className={cn(
+                        "w-10 h-10 rounded-xl flex items-center justify-center text-xl transition-all border",
+                        selectedEmoji === emoji 
+                          ? "bg-indigo-500/20 border-indigo-500 scale-110 shadow-[0_0_15px_rgba(99,102,241,0.3)]" 
+                          : "bg-slate-900 border-slate-700 hover:border-slate-500 hover:scale-105"
+                      )}
+                    >
+                      {emoji}
+                    </button>
+                  ))}
+                  
+                  <label className="relative w-10 h-10 rounded-xl flex items-center justify-center bg-slate-900 border border-dashed border-slate-600 hover:border-indigo-500 transition-all cursor-pointer group overflow-hidden">
+                     <span className="text-xl group-hover:scale-110 transition-transform">➕</span>
+                     <input 
+                        type="text" 
+                        onChange={(e) => {
+                          const val = e.target.value.trim();
+                          if (val) handleEmojiSave(val);
+                        }}
+                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                        placeholder="Emoji"
+                     />
+                  </label>
+               </div>
+               <p className="mt-3 text-[9px] text-slate-500 font-medium italic">Selecting an emoji will update its representation on the global map for easy identification.</p>
+            </motion.div>
+          )}
 
           {/* New Drag to Trip Handle Segment */}
           <motion.div 
@@ -1419,6 +1828,221 @@ const PlaceDetailsPanel = React.memo(function PlaceDetailsPanel({ place, onBack,
                 </div>
               </div>
             </div>
+
+            {/* AI Local Guide Module */}
+            <div className="p-4 rounded-xl bg-slate-900/50 border border-indigo-500/10 hover:border-indigo-500/20 transition-all space-y-3 relative overflow-hidden">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Globe className="w-5 h-5 text-indigo-400" />
+                  <h3 className="text-sm font-bold text-white tracking-wide">Culture & Phrases</h3>
+                </div>
+                {!localGuideData && !isLoadingLocalGuide && (
+                  <button onClick={loadLocalGuide} className="text-[10px] uppercase font-bold tracking-wider px-2 py-1 bg-indigo-600/20 text-indigo-300 rounded hover:bg-indigo-600/30 transition-colors">
+                    Load Guide
+                  </button>
+                )}
+              </div>
+              
+              {isLoadingLocalGuide ? (
+                <div className="flex flex-col items-center justify-center py-6 gap-3">
+                  <div className="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+                  <p className="text-xs text-indigo-400 font-mono animate-pulse uppercase tracking-widest">Compiling local insights...</p>
+                </div>
+              ) : localGuideData ? (
+                <div className="space-y-4 pt-2">
+                  {localGuideData.cultureTips && (
+                    <div className="space-y-2">
+                      <h4 className="text-[10px] font-black uppercase text-indigo-300 tracking-widest flex items-center gap-1.5 border-b border-indigo-500/20 pb-1">
+                        <Sparkles className="w-3 h-3" /> Etiquette & Culture
+                      </h4>
+                      <ul className="space-y-2">
+                        {localGuideData.cultureTips.map((tip: string, idx: number) => (
+                          <li key={idx} className="flex gap-2 items-start text-xs text-slate-300 leading-snug">
+                            <span className="text-indigo-500 mt-0.5">•</span>
+                            <span>{tip}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {localGuideData.phrases && (
+                    <div className="space-y-2">
+                      <h4 className="text-[10px] font-black uppercase text-indigo-300 tracking-widest flex items-center gap-1.5 border-b border-indigo-500/20 pb-1 pt-2">
+                        <Volume2 className="w-3 h-3" /> Quick Phrases
+                      </h4>
+                      <div className="grid gap-2">
+                        {localGuideData.phrases.map((p: any, idx: number) => (
+                          <div key={idx} className="bg-slate-950 p-2.5 rounded-lg border border-slate-800 flex justify-between items-center group hover:border-indigo-500/30 transition-colors">
+                            <div>
+                              <p className="text-xs font-bold text-slate-200">{p.translation}</p>
+                              <p className="text-[10px] text-slate-500 italic">"{p.pronunciation}"</p>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-[10px] text-slate-400 bg-slate-900 px-1.5 py-0.5 rounded uppercase tracking-wider">{p.phrase}</span>
+                              <SpeakButton text={p.translation} className="opacity-0 group-hover:opacity-100 transition-opacity w-6 h-6 bg-indigo-500/10 text-indigo-400 hover:bg-indigo-500/20" />
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <p className="text-xs text-slate-500">Discover essential phrases and culture tips generated by AI.</p>
+              )}
+            </div>
+
+            {/* Travel Journal Module */}
+            {isSaved && (
+              <div id="vanti-travel-journal-card" className="p-4 rounded-xl bg-gradient-to-br from-[#1b1c22] to-[#121318] border border-indigo-500/20 shadow-2xl relative space-y-4">
+                <div className="flex items-center justify-between border-b border-white/5 pb-3">
+                  <div className="flex items-center gap-2.5">
+                    <BookOpen className="w-5 h-5 text-indigo-400" />
+                    <div>
+                      <h3 className="text-sm font-bold text-white tracking-wide">Travel Journal</h3>
+                      <p className="text-[10px] font-mono text-indigo-400 uppercase tracking-widest mt-0.5">Location Memories</p>
+                    </div>
+                  </div>
+                  {user && (
+                    <span className="text-[9px] font-mono text-emerald-400 bg-emerald-400/10 border border-emerald-500/20 px-2 py-0.5 rounded-md uppercase tracking-wider font-extrabold shadow-sm">
+                      Sync Enabled
+                    </span>
+                  )}
+                </div>
+
+                {/* Journal Note Field */}
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest pl-1">Personal Notes</label>
+                  <textarea
+                    value={journalNotesInput}
+                    onChange={(e) => setJournalNotesInput(e.target.value)}
+                    placeholder="Write down your memories, feelings, landmarks visited or thoughts about this place..."
+                    className="w-full h-24 bg-slate-950 border border-slate-800 focus:border-indigo-500 rounded-xl p-3 text-xs text-slate-200 placeholder-slate-600 outline-none transition-colors resize-none scrollbar-none"
+                  />
+                  <div className="flex justify-end">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        e.preventDefault();
+                        saveJournalNotes();
+                      }}
+                      disabled={isSavingJournal || !user}
+                      className="px-4 py-2 bg-indigo-600/20 hover:bg-indigo-600/35 disabled:opacity-50 text-indigo-400 border border-indigo-500/20 rounded-xl text-[10px] font-mono font-bold uppercase tracking-wider transition-all flex items-center gap-1.5 active:scale-95"
+                    >
+                      {isSavingJournal ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          Saving...
+                        </>
+                      ) : (
+                        <>
+                          <Check className="w-3.5 h-3.5" />
+                          Save Notes
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Image Generation & Gallery */}
+                <div className="space-y-3.5 border-t border-white/5 pt-4">
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest pl-1">Generate AI Travel Cover</label>
+                    <p className="text-[9px] text-slate-500 leading-snug">Generate custom journal photos using Gemini API based on your vibe!</p>
+                  </div>
+
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={promptInput}
+                      onChange={(e) => setPromptInput(e.target.value)}
+                      placeholder="e.g. Sunset, pastel skies, film grain effect..."
+                      className="flex-1 bg-slate-950 border border-slate-800 focus:border-indigo-500 rounded-xl px-3 py-2 text-xs text-slate-200 placeholder-slate-600 outline-none transition-colors"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.stopPropagation();
+                          e.preventDefault();
+                          generateJournalImage();
+                        }
+                      }}
+                    />
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        e.preventDefault();
+                        generateJournalImage();
+                      }}
+                      disabled={isGeneratingCover || !promptInput.trim() || !user}
+                      className="px-4 bg-[#6366f1] hover:bg-[#5b5ee0] disabled:bg-slate-850 disabled:text-slate-600 disabled:border-transparent text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 active:scale-95 shadow-lg shadow-indigo-600/10 min-h-[38px]"
+                    >
+                      {isGeneratingCover ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Sparkles className="w-4 h-4" />
+                      )}
+                      Generate
+                    </button>
+                  </div>
+
+                  {/* Journal Photo Gallery */}
+                  {savedPlaceData?.journalImages && savedPlaceData.journalImages.length > 0 && (
+                    <div className="space-y-2 pt-2">
+                      <label className="text-[9px] font-bold uppercase tracking-wider text-slate-500">Journal Snapshots ({savedPlaceData.journalImages.length})</label>
+                      <div className="grid grid-cols-2 gap-3">
+                        {savedPlaceData.journalImages.map((img: string, idx: number) => (
+                          <div key={idx} className="relative aspect-video rounded-xl overflow-hidden border border-white/10 group bg-slate-950">
+                            <img
+                              src={img}
+                              alt="Generated Travel Memory"
+                              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                              referrerPolicy="no-referrer"
+                            />
+                            <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end justify-end p-2">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  e.preventDefault();
+                                  deleteJournalImage(img);
+                                }}
+                                className="p-1.5 rounded-lg bg-red-600/90 text-white hover:bg-red-500 active:scale-90 transition-all shadow-lg"
+                                title="Delete Snapshot"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Finance Tracker */}
+                <FinanceTracker placeId={place.id} savedPlaceData={savedPlaceData} user={user} />
+              </div>
+            )}
+            
+            {/* Route Comparison Section */}
+            {userLocation && (
+              <div className="pt-2">
+                <RouteComparison 
+                  origin={{ lat: userLocation.lat, lng: userLocation.lng }} 
+                  destination={coords.lat && coords.lng ? { lat: coords.lat, lng: coords.lng } : place} 
+                  onSelectRoute={(mode) => {
+                     // Optionally implement mode switching for onShowRoute if supported
+                     if (onShowRoute) onShowRoute();
+                  }}
+                />
+              </div>
+            )}
+
+            {/* Smart Traffic Departure Predictor (Only if saved) */}
+            {isSaved && userLocation && coords.lat && coords.lng && (
+              <TrafficDeparturePredictor 
+                origin={{ lat: userLocation.lat, lng: userLocation.lng }}
+                destination={{ lat: coords.lat, lng: coords.lng }}
+              />
+            )}
           </motion.div>
         </motion.div>
         

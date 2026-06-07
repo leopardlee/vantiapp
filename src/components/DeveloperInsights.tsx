@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { FEATURE_REGISTRY, calculateComplexityMetrics, generateAutomatedReport, DynamicFeatureStats, FeatureMetadata } from '../lib/featureRegistry';
 import { useVantiStore } from '../store/vantiStore';
+import { PerformanceStats } from '../hooks/usePerformanceMonitor';
 import { motion, AnimatePresence } from 'motion/react';
 import FocusLock from 'react-focus-lock';
 import { cn } from '../lib/utils';
@@ -29,9 +30,10 @@ interface DeveloperInsightsProps {
   isOpen: boolean;
   onClose: () => void;
   stats: Omit<DynamicFeatureStats, 'currentLanguage' | 'currentUnits' | 'activeHubTab' | 'activeMode' | 'mapTheme' | 'mapAesthetic'>;
+  perfStats?: PerformanceStats;
 }
 
-export default function DeveloperInsights({ isOpen, onClose, stats }: DeveloperInsightsProps) {
+export default function DeveloperInsights({ isOpen, onClose, stats, perfStats }: DeveloperInsightsProps) {
   const { language, units, activeMode, mapTheme, mapAesthetic } = useVantiStore();
   const [copiedReport, setCopiedReport] = useState(false);
   const [activeSegment, setActiveSegment] = useState<'visuals' | 'registry' | 'report'>('visuals');
@@ -191,6 +193,36 @@ export default function DeveloperInsights({ isOpen, onClose, stats }: DeveloperI
                       <span className="text-[8px] font-mono text-amber-400/80 font-black uppercase tracking-widest">system integrity</span>
                       <p className="text-sm font-black text-white font-mono mt-4 tracking-wider uppercase">{metrics.healthIndex.split(" ")[0]}</p>
                       <p className="text-[9px] text-slate-500 font-bold uppercase tracking-wider mt-1">Ready for compilation</p>
+                    </div>
+
+                    {/* NEW: Performance Badge Section */}
+                    <div className="col-span-2 md:col-span-4 bg-indigo-500/5 border border-indigo-500/20 p-4 rounded-2xl flex flex-wrap items-center justify-between gap-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-lg bg-indigo-500/10 flex items-center justify-center border border-indigo-500/20">
+                          <Gauge className="w-4 h-4 text-indigo-400" />
+                        </div>
+                        <div>
+                          <p className="text-[9px] font-mono font-black text-indigo-400 uppercase tracking-widest">Runtime Performance Metrics</p>
+                          <p className="text-[8px] text-slate-500 uppercase font-bold tracking-wider">Map Load & Memory Analytics</p>
+                        </div>
+                      </div>
+                      
+                      <div className="flex items-center gap-6">
+                        <div className="text-center">
+                          <p className="text-[7px] text-slate-500 uppercase font-black tracking-tighter">FPS</p>
+                          <p className="text-sm font-mono font-black text-white">{perfStats?.fps || '--'}</p>
+                        </div>
+                        <div className="w-px h-6 bg-white/5" />
+                        <div className="text-center">
+                          <p className="text-[7px] text-slate-500 uppercase font-black tracking-tighter">Load Time</p>
+                          <p className="text-sm font-mono font-black text-white">{perfStats?.loadTime ? `${perfStats.loadTime}ms` : '--'}</p>
+                        </div>
+                        <div className="w-px h-6 bg-white/5" />
+                        <div className="text-center">
+                          <p className="text-[7px] text-slate-500 uppercase font-black tracking-tighter">JS Heap</p>
+                          <p className="text-sm font-mono font-black text-white">{perfStats?.memoryUsage ? `${perfStats.memoryUsage}MB` : '--'}</p>
+                        </div>
+                      </div>
                     </div>
                   </div>
 

@@ -3,7 +3,17 @@ import { persist } from 'zustand/middleware';
 import { useEffect, useRef } from 'react';
 import { VantiMode } from '../types';
 
-export type MapAesthetic = 'none' | 'night' | 'contrast' | 'minimalist' | 'sepia' | 'cyberpunk';
+export type MapAesthetic = 'none' | 'night' | 'contrast' | 'minimalist' | 'sepia' | 'cyberpunk' | 'retro-blueprint' | 'midnight-cyberpunk' | 'minimalist-paper' | 'terrain-focused';
+export type TravelMood = 'normal' | 'adventure' | 'relaxation' | 'culinary';
+
+export interface CustomMarker {
+  id: string;
+  lat: number;
+  lng: number;
+  nickname: string;
+  note: string;
+  category: string;
+}
 
 export interface VantiState {
   activeMode: VantiMode;
@@ -17,6 +27,7 @@ export interface VantiState {
   recenterTrigger: { lat: number; lng: number } | null;
   isInitializing: boolean;
   isAROpen: boolean;
+  isChatbotOpen: boolean;
   units: 'metric' | 'imperial';
   mapStyle: 'streets' | 'satellite';
   mapAesthetic: MapAesthetic;
@@ -28,8 +39,16 @@ export interface VantiState {
   isLocalAILoading: boolean;
   routingOrigin: any | null;
   bookmarkedPlaces: Record<string, any>;
+  customMarkers: CustomMarker[];
   showTripSidebar: boolean;
   isCinematicMode: boolean;
+  travelMood: TravelMood;
+  areNotificationsEnabled: boolean;
+  trendingDestinations: any[];
+  hiddenItinerarySegments: Record<string, boolean>;
+  accessibilityScale: number;
+  isPrefetchingEnabled: boolean;
+  currentWeatherData: any | null;
 }
 
 export interface VantiActions {
@@ -45,6 +64,7 @@ export interface VantiActions {
   clearRecenterTrigger: () => void;
   setIsInitializing: (isInitializing: boolean) => void;
   setIsAROpen: (isOpen: boolean) => void;
+  setIsChatbotOpen: (isOpen: boolean) => void;
   setUnits: (units: 'metric' | 'imperial') => void;
   setMapStyle: (mapStyle: 'streets' | 'satellite') => void;
   setMapAesthetic: (aesthetic: MapAesthetic) => void;
@@ -61,8 +81,17 @@ export interface VantiActions {
   setLocalAILoading: (loading: boolean) => void;
   setRoutingOrigin: (place: any | null) => void;
   toggleBookmark: (place: any) => void;
+  addCustomMarker: (marker: CustomMarker) => void;
+  removeCustomMarker: (id: string) => void;
   setShowTripSidebar: (show: boolean) => void;
   setIsCinematicMode: (active: boolean) => void;
+  setTravelMood: (mood: TravelMood) => void;
+  setNotificationsEnabled: (enabled: boolean) => void;
+  setTrendingDestinations: (destinations: any[]) => void;
+  toggleItinerarySegment: (segmentId: string) => void;
+  setAccessibilityScale: (scale: number) => void;
+  setIsPrefetchingEnabled: (enabled: boolean) => void;
+  setCurrentWeatherData: (weather: any | null) => void;
 }
 
 type VantiStore = VantiState & VantiActions;
@@ -144,13 +173,15 @@ export const useVantiStore = create<VantiStore>()(
       setIsInitializing: (isInitializing) => set({ isInitializing }),
       isAROpen: false,
       setIsAROpen: (isOpen) => set({ isAROpen: isOpen }),
+      isChatbotOpen: false,
+      setIsChatbotOpen: (isOpen) => set({ isChatbotOpen: isOpen }),
       units: 'metric',
       setUnits: (units) => set({ units }),
       mapStyle: 'streets',
       setMapStyle: (mapStyle) => set({ mapStyle }),
-      mapAesthetic: 'none',
+      mapAesthetic: typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'night' : 'none',
       setMapAesthetic: (mapAesthetic) => set({ mapAesthetic }),
-      language: 'en',
+      language: (typeof navigator !== 'undefined' && navigator.language.startsWith('ko')) ? 'ko' : 'en',
       setLanguage: (language) => set({ language }),
       itinerary: [],
       addToItinerary: (place) => set((state) => {
@@ -185,6 +216,9 @@ export const useVantiStore = create<VantiStore>()(
       routingOrigin: null,
       setRoutingOrigin: (routingOrigin) => set({ routingOrigin }),
       bookmarkedPlaces: {},
+      customMarkers: [],
+      addCustomMarker: (marker) => set((state) => ({ customMarkers: [...state.customMarkers, marker] })),
+      removeCustomMarker: (id) => set((state) => ({ customMarkers: state.customMarkers.filter(m => m.id !== id) })),
       toggleBookmark: (place) => set((state) => {
         const newBookmarks = { ...state.bookmarkedPlaces };
         if (newBookmarks[place.id]) {
@@ -198,18 +232,41 @@ export const useVantiStore = create<VantiStore>()(
       setShowTripSidebar: (showTripSidebar) => set({ showTripSidebar }),
       isCinematicMode: false,
       setIsCinematicMode: (isCinematicMode) => set({ isCinematicMode }),
+      travelMood: 'normal',
+      setTravelMood: (travelMood) => set({ travelMood }),
+      areNotificationsEnabled: false,
+      setNotificationsEnabled: (areNotificationsEnabled) => set({ areNotificationsEnabled }),
+      trendingDestinations: [],
+      setTrendingDestinations: (trendingDestinations) => set({ trendingDestinations }),
+      hiddenItinerarySegments: {},
+      toggleItinerarySegment: (segmentId) => set((state) => {
+        const next = { ...state.hiddenItinerarySegments };
+        next[segmentId] = !next[segmentId];
+        return { hiddenItinerarySegments: next };
+      }),
+      accessibilityScale: 1,
+      setAccessibilityScale: (accessibilityScale) => set({ accessibilityScale }),
+      isPrefetchingEnabled: true,
+      setIsPrefetchingEnabled: (isPrefetchingEnabled) => set({ isPrefetchingEnabled }),
+      currentWeatherData: null,
+      setCurrentWeatherData: (currentWeatherData) => set({ currentWeatherData }),
     }),
     {
       name: 'vanti-storage',
       partialize: (state) => ({
         bookmarkedPlaces: state.bookmarkedPlaces,
+        customMarkers: state.customMarkers,
         units: state.units,
         mapTheme: state.mapTheme,
         themeOverride: state.themeOverride,
         mapAesthetic: state.mapAesthetic,
         language: state.language,
         itinerary: state.itinerary,
-        showTripSidebar: state.showTripSidebar
+        showTripSidebar: state.showTripSidebar,
+        areNotificationsEnabled: state.areNotificationsEnabled,
+        hiddenItinerarySegments: state.hiddenItinerarySegments,
+        accessibilityScale: state.accessibilityScale,
+        isPrefetchingEnabled: state.isPrefetchingEnabled
       }),
     }
   )

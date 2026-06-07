@@ -24,6 +24,7 @@ body {
   pointer-events: none;
 }
 
+/* WOW UI Effects */
 @keyframes shimmer {
   100% { transform: translateX(100%); }
 }
@@ -39,6 +40,54 @@ body {
 
 .animate-pulse-slow {
   animation: pulse-slow 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes wow-float {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50% { transform: translateY(-10px) scale(1.02); }
+}
+
+.animate-wow-float {
+  animation: wow-float 6s ease-in-out infinite;
+}
+
+@keyframes wow-scanline {
+  0% { transform: translateY(-100%); }
+  100% { transform: translateY(100vh); }
+}
+
+.animate-wow-scanline {
+  animation: wow-scanline 8s linear infinite;
+}
+
+@keyframes wow-glow {
+  0%, 100% { filter: drop-shadow(0 0 15px rgba(99, 102, 241, 0.5)); }
+  50% { filter: drop-shadow(0 0 35px rgba(168, 85, 247, 0.8)); }
+}
+
+.animate-wow-glow {
+  animation: wow-glow 4s ease-in-out infinite;
+}
+
+.glass-vignette {
+  background: radial-gradient(circle at center, transparent 30%, rgba(0,0,0,0.8) 150%);
+  pointer-events: none;
+}
+
+.glass-lens {
+  backdrop-filter: blur(8px) saturate(180%);
+  -webkit-backdrop-filter: blur(8px) saturate(180%);
+  background: linear-gradient(135deg, rgba(255,255,255,0.1), rgba(255,255,255,0.0));
+  border: 1px solid rgba(255,255,255,0.18);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+}
+
+.magic-lens-view {
+  clip-path: circle(120px at var(--mouse-x) var(--mouse-y));
+  backdrop-filter: blur(12px) contrast(120%) saturate(200%);
+  z-index: 50;
+  pointer-events: none;
+  transition: opacity 0.3s;
 }
 
 .InteractionOverlayRoot button,
@@ -59,3 +108,4 @@ body {
   -ms-overflow-style: none; /* IE and Edge */
   scrollbar-width: none; /* Firefox */
 }
+

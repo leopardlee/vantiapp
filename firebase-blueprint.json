@@ -34,7 +34,9 @@
         "address": { "type": "string" },
         "lat": { "type": "number" },
         "lng": { "type": "number" },
-        "savedAt": { "type": "number" }
+        "savedAt": { "type": "number" },
+        "journalNotes": { "type": "string" },
+        "journalImages": { "type": "array", "items": { "type": "string" } }
       },
       "required": ["placeId", "displayName", "savedAt"]
     },
@@ -76,6 +78,20 @@
         "updatedAt": { "type": "number" }
       },
       "required": ["stops", "updatedAt"]
+    },
+    "UserLocation": {
+      "title": "UserLocation",
+      "description": "Real-time location coordinates for a user",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "lat": { "type": "number" },
+        "lng": { "type": "number" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["uid", "lat", "lng", "updatedAt"]
     }
   },
   "firestore": {
@@ -102,6 +118,10 @@
     "travelSnapshots/{snapshotId}": {
       "schema": { "$ref": "TravelSnapshot" },
       "description": "Shared travel snapshots feed"
+    },
+    "userLocations/{userId}": {
+      "schema": { "$ref": "UserLocation" },
+      "description": "Real-time user locations for social features"
     }
   }
 }

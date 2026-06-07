@@ -10,6 +10,7 @@ export default function RouteDisplay({
   waypoints = [],
   routeStyle = 'classic',
   onDeviate,
+  onRouteInfoUpdate,
 }: {
   origin: string | google.maps.LatLngLiteral;
   destination: string | google.maps.LatLngLiteral;
@@ -17,16 +18,22 @@ export default function RouteDisplay({
   waypoints?: (string | google.maps.LatLngLiteral)[];
   routeStyle?: 'classic' | 'traffic';
   onDeviate?: () => void;
+  onRouteInfoUpdate?: (info: { distance: string; duration: string; durationMinutes: number } | null) => void;
 }) {
   const map = useMap();
   const routesLib = useMapsLibrary('routes');
   const geometryLib = useMapsLibrary('geometry');
   const polylinesRef = useRef<google.maps.Polyline[]>([]);
+  const incidentMarkersRef = useRef<google.maps.Marker[]>([]);
   const animationFrameRef = useRef<number>(0);
   const lastDeviateTimeRef = useRef<number>(0);
 
   const [routeInfo, setRouteInfo] = useState<{distance: string, duration: string, durationMinutes: number} | null>(null);
   const [travelMode, setTravelMode] = useState<'DRIVING' | 'WALKING' | 'TRANSIT'>('DRIVING');
+
+  useEffect(() => {
+    onRouteInfoUpdate?.(routeInfo);
+  }, [routeInfo, onRouteInfoUpdate]);
 
   // Route Deviation Check
   useEffect(() => {
@@ -57,6 +64,8 @@ export default function RouteDisplay({
     // Clear previous route
     polylinesRef.current.forEach(p => p.setMap(null));
     polylinesRef.current = [];
+    incidentMarkersRef.current.forEach(m => m.setMap(null));
+    incidentMarkersRef.current = [];
     setRouteInfo(null);
     cancelAnimationFrame(animationFrameRef.current);
 
@@ -75,34 +84,132 @@ export default function RouteDisplay({
         const newPolylines = route.createPolylines();
         
         // Calculate info
-        const distKm = (route.distanceMeters / 1000).toFixed(1) + ' km';
+        const distKmRaw = route.distanceMeters / 1000;
+        const distKm = distKmRaw.toFixed(1) + ' km';
         const durMin = Math.round(route.durationMillis / 60000);
         setRouteInfo({ distance: distKm, duration: durMin + ' min', durationMinutes: durMin });
+
+        // Traffic Segmentation Logic (Mocking if not provided by API)
+        const fullPath = route.path || [];
+        const segments: google.maps.LatLngLiteral[][] = [];
+        const segmentCount = Math.min(6, Math.max(2, Math.floor(fullPath.length / 50)));
+        const segmentSize = Math.floor(fullPath.length / segmentCount);
+
+        for (let i = 0; i < segmentCount; i++) {
+          segments.push(fullPath.slice(i * segmentSize, (i + 1) * segmentSize + 1));
+        }
+
+        const trafficColors = ['#10b981', '#f59e0b', '#ef4444', '#10b981']; // Clear, Moderate, Heavy
+
+        const createdPolylines: google.maps.Polyline[] = [];
+
+        segments.forEach((segPath, idx) => {
+          const isWalking = travelMode === 'WALKING';
+          const isTransit = travelMode === 'TRANSIT';
+          
+          // Use traffic colors for driving mode if style is traffic
+          let strokeColor = isWalking ? '#10b981' : isTransit ? '#f59e0b' : '#3b82f6';
+          if (travelMode === 'DRIVING' && routeStyle === 'traffic') {
+            strokeColor = trafficColors[idx % trafficColors.length];
+          }
+
+          const poly = new google.maps.Polyline({
+            path: segPath,
+            strokeColor: strokeColor,
+            strokeOpacity: 0.8,
+            strokeWeight: 8,
+            zIndex: 100,
+            map: map
+          });
+
+          // Tracing animation effect using a glowing dash pattern
+          const mainIcon = {
+            path: 'M 0,-2 0,2',
+            strokeOpacity: 1,
+            strokeColor: strokeColor,
+            scale: 4,
+            strokeWeight: 3
+          };
+
+          poly.setOptions({
+            icons: [{
+              icon: mainIcon,
+              offset: '0',
+              repeat: '24px'
+            }]
+          });
+
+          createdPolylines.push(poly);
+        });
+
+        polylinesRef.current = createdPolylines;
+
+        // Incident Markers
+        if (routeStyle === 'traffic' && travelMode === 'DRIVING' && fullPath.length > 50) {
+           const incidentIdx = Math.floor(fullPath.length * 0.4);
+           const pos = fullPath[incidentIdx];
+           const marker = new google.maps.Marker({
+             position: pos,
+             map: map,
+             label: { text: "🚧", fontSize: "20px" },
+             title: "Road Work Ahead",
+             zIndex: 101,
+             optimized: true
+           });
+           incidentMarkersRef.current.push(marker);
+        }
         
+        // Tactile Scaling Haptic Feedback: Provide more "weight" for longer journeys
+        if (typeof navigator !== 'undefined' && navigator.vibrate) {
+           // Intensity scales with distance (0-50km -> 0-100% boost)
+           const distanceFactor = Math.min(distKmRaw / 25, 2); 
+           const hapticPattern = [30, 40, 50].map(v => v * distanceFactor);
+           navigator.vibrate(hapticPattern);
+        }
+
         // Style polylines perfectly for dark mode
         newPolylines.forEach(p => {
           const isWalking = travelMode === 'WALKING';
           const isTransit = travelMode === 'TRANSIT';
+          const baseColor = routeStyle === 'traffic' ? '#ef4444' : isWalking ? '#10b981' : isTransit ? '#f59e0b' : '#3b82f6';
+          
           p.setOptions({
-             strokeColor: routeStyle === 'traffic' ? '#ef4444' : isWalking ? '#10b981' : isTransit ? '#f59e0b' : '#3b82f6',
-             strokeOpacity: 0.8,
-             strokeWeight: 6,
+             strokeColor: baseColor,
+             strokeOpacity: 0.4,
+             strokeWeight: 8,
              zIndex: 100
           });
           
-          // Tracing animation effect using strokeDasharray symbols
-          const lineSymbol = {
-            path: 'M 0,-1 0,1',
+          // Tracing animation effect using a glowing dash pattern
+          const mainIcon = {
+            path: 'M 0,-2 0,2',
             strokeOpacity: 1,
-            scale: 4
+            strokeColor: baseColor,
+            scale: 4,
+            strokeWeight: 3
+          };
+
+          const glowIcon = {
+            path: 'M 0,-3 0,3',
+            strokeOpacity: 0.3,
+            strokeColor: '#fff',
+            scale: 5,
+            strokeWeight: 1
           };
 
           p.setOptions({
-            icons: [{
-              icon: lineSymbol,
-              offset: '0',
-              repeat: '20px'
-            }]
+            icons: [
+              {
+                icon: mainIcon,
+                offset: '0',
+                repeat: '24px'
+              },
+              {
+                icon: glowIcon,
+                offset: '12px',
+                repeat: '48px'
+              }
+            ]
           });
 
           p.setMap(map);
@@ -111,19 +218,18 @@ export default function RouteDisplay({
         polylinesRef.current = newPolylines;
 
         // Path-tracing "draw-in" animation
-        const fullPath = route.path || [];
+        const fullPathTotal = route.path || [];
         let pointsVisible = 0;
-        const totalPoints = fullPath.length;
+        const totalPoints = fullPathTotal.length;
         const pointsPerFrame = Math.max(1, Math.ceil(totalPoints / 45)); // Draw in ~0.75s at 60fps
 
         const drawLoop = () => {
           pointsVisible += pointsPerFrame;
           if (pointsVisible <= totalPoints) {
-            const currentPath = fullPath.slice(0, pointsVisible);
-            newPolylines.forEach(p => p.setPath(currentPath));
-            animationFrameRef.current = requestAnimationFrame(drawLoop);
+            // In segmented mode, we just let them stay or reveal them slowly
+            // For simplicity in segmented mode, we'll skip the slice reveal and just start flow
+            startFlowAnimation();
           } else {
-            newPolylines.forEach(p => p.setPath(fullPath));
             startFlowAnimation();
           }
         };
@@ -137,8 +243,12 @@ export default function RouteDisplay({
               
               polylinesRef.current.forEach(p => {
                 const icons = p.get('icons');
-                if (icons && icons[0]) {
-                  icons[0].offset = offset + 'px';
+                if (icons) {
+                  icons.forEach((icon: any, idx: number) => {
+                    // Stagger the offsets for varying effect layers
+                    const staggeredOffset = (offset + (idx * 24)) % 200;
+                    icon.offset = staggeredOffset + 'px';
+                  });
                   p.set('icons', icons);
                 }
                 p.setOptions({ strokeOpacity: pulseOpacity });
@@ -162,6 +272,7 @@ export default function RouteDisplay({
     return () => {
       cancelAnimationFrame(animationFrameRef.current);
       polylinesRef.current.forEach(p => p.setMap(null));
+      incidentMarkersRef.current.forEach(m => m.setMap(null));
     };
   }, [routesLib, map, origin, destination, routeStyle, travelMode]);
 

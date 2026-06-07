@@ -4,6 +4,8 @@ import { VantiGlobalShell } from './components/VantiGlobalShell';
 import VantiMap from './components/VantiMap';
 import { BottomNavigation } from './components/BottomNavigation';
 import { useRecenterToUser, useVantiStore } from './store/vantiStore';
+import { ViewportProvider } from './lib/ViewportContext';
+import { WowExperienceLayer } from './components/WowExperienceLayer';
 
 const API_KEY =
   process.env.GOOGLE_MAPS_PLATFORM_KEY ||
@@ -32,9 +34,12 @@ export default function App() {
   }, [language]);
 
   return (
-    <VantiGlobalShell bottomNavigation={<BottomNavigation />}>
-      {mapElement}
-    </VantiGlobalShell>
+    <ViewportProvider>
+      <VantiGlobalShell bottomNavigation={<BottomNavigation />}>
+        {mapElement}
+        <WowExperienceLayer />
+      </VantiGlobalShell>
+    </ViewportProvider>
   );
 }
 

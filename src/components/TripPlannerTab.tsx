@@ -209,9 +209,17 @@ export function TripPlannerTab({
     // Rough duration estimate: 40km/h average urban speed
     const durationMin = (totalDist / 40) * 60 + (itinerary.length * 15); // Add 15 mins buffer per stop
     
+    // Carbon Footprint: avg car emits ~0.12 kg CO2 per km. Public transit ~0.04 kg.
+    const carbonFootprintCar = totalDist * 0.12;
+    const carbonFootprintTransit = totalDist * 0.04;
+    const carbonSaved = carbonFootprintCar - carbonFootprintTransit;
+
     return {
       distance: units === 'metric' ? totalDist : totalDist * 0.621371,
-      duration: durationMin
+      duration: durationMin,
+      carbonCar: carbonFootprintCar,
+      carbonTransit: carbonFootprintTransit,
+      carbonSaved: carbonSaved
     };
   }, [itinerary, units]);
 
@@ -306,31 +314,43 @@ export function TripPlannerTab({
                 />
               </div>
             </div>
-            <motion.div 
+           <motion.div 
               initial={{ opacity: 0, scale: 0.9 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.9 }}
-              className="grid grid-cols-2 gap-3 shrink-0"
+              className="flex flex-col gap-2 shrink-0"
             >
-            <div className="p-3 bg-white/5 border border-white/10 rounded-2xl">
-              <span className="text-[9px] font-bold text-slate-500 uppercase tracking-widest block mb-1">{t('planner.distance')}</span>
-              <div className="flex items-baseline gap-1">
-                <span className="text-xl font-black text-white font-mono">{metrics.distance.toFixed(1)}</span>
-                <span className="text-[10px] font-bold text-slate-400 uppercase">{units === 'metric' ? t('common.km') : t('common.mi')}</span>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="p-3 bg-white/5 border border-white/10 rounded-2xl">
+                  <span className="text-[9px] font-bold text-slate-500 uppercase tracking-widest block mb-1">{t('planner.distance')}</span>
+                  <div className="flex items-baseline gap-1">
+                    <span className="text-xl font-black text-white font-mono">{metrics.distance.toFixed(1)}</span>
+                    <span className="text-[10px] font-bold text-slate-400 uppercase">{units === 'metric' ? t('common.km') : t('common.mi')}</span>
+                  </div>
+                </div>
+                <div className="p-3 bg-white/5 border border-white/10 rounded-2xl">
+                  <span className="text-[9px] font-bold text-slate-500 uppercase tracking-widest block mb-1">{t('planner.duration')}</span>
+                  <div className="flex items-baseline gap-1">
+                    <span className="text-xl font-black text-white font-mono">
+                      {metrics.duration > 60 
+                        ? `${Math.floor(metrics.duration / 60)}${t('common.hr')} ${Math.round(metrics.duration % 60)}${t('common.min')}`
+                        : `${Math.round(metrics.duration)}${t('common.min')}`
+                      }
+                    </span>
+                  </div>
+                </div>
               </div>
-            </div>
-            <div className="p-3 bg-white/5 border border-white/10 rounded-2xl">
-              <span className="text-[9px] font-bold text-slate-500 uppercase tracking-widest block mb-1">{t('planner.duration')}</span>
-              <div className="flex items-baseline gap-1">
-                <span className="text-xl font-black text-white font-mono">
-                  {metrics.duration > 60 
-                    ? `${Math.floor(metrics.duration / 60)}${t('common.hr')} ${Math.round(metrics.duration % 60)}${t('common.min')}`
-                    : `${Math.round(metrics.duration)}${t('common.min')}`
-                  }
-                </span>
+              <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl flex items-center justify-between">
+                <div>
+                   <span className="text-[9px] font-bold text-emerald-400 uppercase tracking-widest block mb-0.5">Eco Analytics (CO₂ Saved)</span>
+                   <p className="text-[10px] text-slate-300">By choosing transit over car</p>
+                </div>
+                <div className="flex items-baseline gap-1">
+                  <span className="text-xl font-black text-emerald-400 font-mono">+{metrics.carbonSaved.toFixed(1)}</span>
+                  <span className="text-[10px] font-bold text-emerald-500 uppercase">kg</span>
+                </div>
               </div>
-            </div>
-          </motion.div>
+            </motion.div>
           </div>
         )}
       </AnimatePresence>

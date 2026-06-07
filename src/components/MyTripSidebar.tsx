@@ -16,12 +16,16 @@ import {
   Check,
   Edit2,
   Save,
-  Compass
+  Compass,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 export function MyTripSidebar({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
   const itinerary = useVantiStore((state) => state.itinerary);
+  const hiddenItinerarySegments = useVantiStore((state) => state.hiddenItinerarySegments);
+  const toggleItinerarySegment = useVantiStore((state) => state.toggleItinerarySegment);
   const removeFromItinerary = useVantiStore((state) => state.removeFromItinerary);
   const reorderItinerary = useVantiStore((state) => state.reorderItinerary);
   const setItinerary = useVantiStore((state) => state.setItinerary);
@@ -41,6 +45,37 @@ export function MyTripSidebar({ isOpen, onClose }: { isOpen: boolean; onClose: (
   // Inline time Slot editing state
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [editingTimeText, setEditingTimeText] = useState('');
+
+  const [isMagicScheduling, setIsMagicScheduling] = useState(false);
+  const [isSavingJournal, setIsSavingJournal] = useState(false);
+
+  const handleMagicSchedule = async () => {
+    if (itinerary.length === 0) return;
+    setIsMagicScheduling(true);
+    try {
+      const res = await fetch('/api/magic-schedule', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ places: itinerary })
+      });
+      const data = await res.json();
+      if (data.schedule) {
+        // Merge schedule back into itinerary
+        const updated = itinerary.map(item => {
+           const match = data.schedule.find((s: any) => s.id === item.id);
+           if (match) {
+             return { ...item, timeSlot: match.timeSlot, aiNote: match.aiNote };
+           }
+           return item;
+        });
+        setItinerary(updated);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsMagicScheduling(false);
+    }
+  };
 
   const handleReorder = (newOrder: any[]) => {
     const currentIds = itinerary.map(p => p.id).join(',');
@@ -325,27 +360,34 @@ export function MyTripSidebar({ isOpen, onClose }: { isOpen: boolean; onClose: (
                           </div>
                         </div>
 
-                        {/* Middle Info Row (Schedule Time & coordinates locator indicator) */}
-                        <div className="flex flex-wrap items-center justify-between gap-2 pl-4 pt-1 border-t border-white/[0.03]">
-                          {/* Schedule block */}
-                          <div className="flex items-center gap-1.5 min-w-0">
-                            {place.timeSlot ? (
-                              <div className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-rose-500/10 border border-rose-500/20 text-[10px] text-rose-300 font-mono font-bold animate-fade-in truncate">
-                                <Clock className="w-3 h-3 text-rose-400" />
-                                {place.timeSlot}
-                              </div>
-                            ) : (
-                              <div className="text-[9px] text-slate-500 font-bold uppercase tracking-wider font-mono">
-                                Unscheduled Spot
+                        <div className="flex flex-col gap-1 pl-4 pt-1 border-t border-white/[0.03]">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            {/* Schedule block */}
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              {place.timeSlot ? (
+                                <div className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-rose-500/10 border border-rose-500/20 text-[10px] text-rose-300 font-mono font-bold animate-fade-in truncate">
+                                  <Clock className="w-3 h-3 text-rose-400" />
+                                  {place.timeSlot}
+                                </div>
+                              ) : (
+                                <div className="text-[9px] text-slate-500 font-bold uppercase tracking-wider font-mono">
+                                  Unscheduled Spot
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Coordinates linkage button */}
+                            {stopLat && stopLng && (
+                              <div className="flex items-center gap-1 text-[9px] text-emerald-400 font-mono">
+                                <Navigation className="w-2.5 h-2.5 rotate-45" />
+                                {Number(stopLat).toFixed(3)}, {Number(stopLng).toFixed(3)}
                               </div>
                             )}
                           </div>
-
-                          {/* Coordinates linkage button */}
-                          {stopLat && stopLng && (
-                            <div className="flex items-center gap-1 text-[9px] text-emerald-400 font-mono">
-                              <Navigation className="w-2.5 h-2.5 rotate-45" />
-                              {Number(stopLat).toFixed(3)}, {Number(stopLng).toFixed(3)}
+                          {place.aiNote && (
+                            <div className="text-[10px] text-indigo-300 bg-indigo-500/10 px-2 py-1 rounded border border-indigo-500/20 mt-1 italic break-words whitespace-pre-wrap flex items-start gap-1.5">
+                              <Sparkles className="w-3 h-3 shrink-0 mt-0.5" />
+                              {place.aiNote}
                             </div>
                           )}
                         </div>
@@ -386,6 +428,52 @@ export function MyTripSidebar({ isOpen, onClose }: { isOpen: boolean; onClose: (
                             </div>
                           </div>
                         )}
+
+                        {/* Inter-stop Connecting Pathway Segment Toggler */}
+                        {index < itinerary.length - 1 && (() => {
+                          const nextPlace = itinerary[index + 1];
+                          const segmentId = `${place.id}_to_${nextPlace.id}`;
+                          const isHidden = !!hiddenItinerarySegments[segmentId];
+                          return (
+                            <div 
+                              className="mt-4 pt-4 border-t border-dashed border-white/5 flex items-center justify-between"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                <Route className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                                <div className="min-w-0">
+                                  <div className="text-[9px] uppercase font-mono font-bold text-rose-400">CONNECTING ROUTE</div>
+                                  <div className="text-[10px] text-slate-400 truncate">To: {nextPlace.displayName || nextPlace.name}</div>
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  toggleItinerarySegment(segmentId);
+                                }}
+                                className={cn(
+                                  "px-2.5 py-1.5 rounded-lg border text-[10px] font-bold uppercase transition-all flex items-center gap-1.5",
+                                  isHidden 
+                                    ? "bg-slate-900 border-slate-800 text-slate-500 hover:text-slate-400" 
+                                    : "bg-rose-500/10 border-rose-500/20 text-rose-400 hover:bg-rose-500/20"
+                                )}
+                              >
+                                {isHidden ? (
+                                  <>
+                                    <EyeOff className="w-3 h-3" />
+                                    <span>Hidden</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Eye className="w-3 h-3" />
+                                    <span>Visible</span>
+                                  </>
+                                )}
+                              </button>
+                            </div>
+                          );
+                        })()}
                       </Reorder.Item>
                     );
                   })}
@@ -413,19 +501,61 @@ export function MyTripSidebar({ isOpen, onClose }: { isOpen: boolean; onClose: (
                   </div>
                 </div>
 
-                <button 
-                  onClick={(e) => {
-                    e.preventDefault();
-                    const setActiveMode = useVantiStore.getState().setActiveMode;
-                    if (setActiveMode) {
-                      setActiveMode('planner');
-                    }
-                  }}
-                  className="w-full bg-rose-500 hover:bg-rose-450 text-white h-13 rounded-2xl font-black uppercase tracking-[0.2em] text-[10px] shadow-[0_10px_30px_rgba(244,63,94,0.25)] transition-all active:scale-95 flex items-center justify-center gap-3 group border border-transparent"
-                >
-                  <Route className="w-4 h-4 group-hover:rotate-12 transition-transform" />
-                  Generate Optimized Path
-                </button>
+                <div className="flex flex-col gap-2">
+                  <button 
+                    onClick={async () => {
+                      setIsSavingJournal(true);
+                      try {
+                        const { auth, db } = await import('../lib/firebase');
+                        const { collection, addDoc, serverTimestamp } = await import('firebase/firestore');
+                        if (!auth.currentUser) {
+                          alert('Please login to save to journal');
+                          return;
+                        }
+                        await addDoc(collection(db, 'diaries'), {
+                          userId: auth.currentUser.uid,
+                          createdAt: serverTimestamp(),
+                          text: `Trip Itinerary: \n${itinerary.map(i => `- ${i.displayName || i.name} (${i.timeSlot || 'Anytime'})`).join('\n')}`,
+                          locationName: 'Saved Itinerary',
+                          likes: 0
+                        });
+                        alert('Saved to Journal!');
+                      } catch (e) {
+                         console.error(e);
+                      } finally {
+                        setIsSavingJournal(false);
+                      }
+                    }}
+                    disabled={isSavingJournal}
+                    className="w-full bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 border border-emerald-500/20 h-10 rounded-2xl font-black uppercase tracking-wider text-[9px] transition-all active:scale-95 flex items-center justify-center gap-2"
+                  >
+                    <Save className="w-3.5 h-3.5" />
+                    {isSavingJournal ? 'Saving...' : 'Save to Journal'}
+                  </button>
+                  <div className="flex gap-2">
+                    <button 
+                      onClick={handleMagicSchedule}
+                      disabled={isMagicScheduling}
+                      className="flex-1 bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-400 border border-indigo-500/20 h-10 rounded-2xl font-black uppercase tracking-wider text-[9px] transition-all active:scale-95 flex items-center justify-center gap-2"
+                    >
+                      <Sparkles className="w-3.5 h-3.5" />
+                      {isMagicScheduling ? 'Generating...' : 'AI Magic'}
+                    </button>
+                    <button 
+                      onClick={(e) => {
+                        e.preventDefault();
+                        const setActiveMode = useVantiStore.getState().setActiveMode;
+                        if (setActiveMode) {
+                          setActiveMode('planner');
+                        }
+                      }}
+                      className="flex-1 bg-rose-500/20 hover:bg-rose-500/30 text-rose-400 border border-rose-500/20 h-10 rounded-2xl font-black uppercase tracking-wider text-[9px] transition-all active:scale-95 flex items-center justify-center gap-2"
+                    >
+                      <Route className="w-3.5 h-3.5" />
+                      Path
+                    </button>
+                  </div>
+                </div>
               </div>
             )}
           </motion.div>

@@ -211,7 +211,7 @@ export function AnalyticsDashboard({ savedPlaces, trajectoryLength }: AnalyticsD
               <g transform={`translate(${padding.left}, ${padding.top})`}>
                 {/* Horizontal Gridlines */}
                 {yTicks.map((tickVal, idx) => (
-                  <g key={idx} transform={`translate(0, ${yScale(tickVal)})`}>
+                  <g key={`y-tick-${idx}`} transform={`translate(0, ${yScale(tickVal)})`}>
                     <line 
                       x1={0} 
                       x2={d3Width} 
@@ -256,7 +256,7 @@ export function AnalyticsDashboard({ savedPlaces, trajectoryLength }: AnalyticsD
                   const isHovered = hoveredPoint?.day === d.day;
 
                   return (
-                    <g key={index} className="cursor-pointer">
+                    <g key={`trend-point-${index}`} className="cursor-pointer">
                       {/* Transparent wider selector trigger circle */}
                       <circle 
                         cx={cx} 
@@ -294,7 +294,7 @@ export function AnalyticsDashboard({ savedPlaces, trajectoryLength }: AnalyticsD
                   const cx = xScale(d.day) || 0;
                   return (
                     <text 
-                      key={index}
+                      key={`trend-label-${index}`}
                       x={cx}
                       y={d3Height + 16}
                       fill={hoveredPoint?.day === d.day ? "#a78bfa" : "#475569"}

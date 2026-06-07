@@ -1,19 +1,27 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo, Component, ReactNode } from 'react';
+import SunCalc from 'suncalc';
 import { Map, AdvancedMarker, useMap, useMapsLibrary, Map3D, MapMode, GestureHandling, Map3DRef, Marker3D } from '@vis.gl/react-google-maps';
 import { MarkerClusterer } from '@googlemaps/markerclusterer';
 import { 
   Search, MapPin, Navigation, List, X, Loader2, LogIn, LogOut, Box, Globe, Star,
-  Bookmark, Users, Sparkles, Tag, User, Layers, LocateFixed, Eye, EyeOff, Ticket, 
+  Bookmark, Users, Sparkles, Tag, User, Layers, LocateFixed, Eye, EyeOff, Ticket, History, Landmark,
   HelpCircle, ChevronRight, Award, Wallet, Info, Camera, Video, BookOpen,
-  Plus, Minus, Mountain, Download, Radar as RadarIcon, Settings, Map as MapIcon,
+  Plus, Minus, Mountain, Download, Radar as RadarIcon, Settings, Map as MapIcon, TrendingUp,
   Check, CheckSquare, Square, Wifi, Battery, Flame, Activity, ShieldAlert, Lock, Unlock,
-  Compass, Cloud, Sun, CloudRain, Snowflake, AlertCircle, Heart, Crosshair, Mic, Trash2, Zap
+  Compass, Coffee, Utensils, Cloud, Sun, CloudRain, Snowflake, AlertCircle, Heart, Crosshair, Mic, Trash2, Zap, LayoutGrid, Calendar, Edit2, Check as CheckIcon,
+  Wind
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
+import { getEmojiForPlace } from '../lib/placeIcons';
+import { MapMarkerIcon, getIconForType } from './MapMarkerIcon';
 import FocusLock from 'react-focus-lock';
 import PlaceDetailsPanel from './PlaceDetailsPanel';
+import { LandmarkMarker } from './LandmarkMarker';
+import { CommunityActivityLayer } from './CommunityActivityLayer';
+import { SafeAdvancedMarker, MapErrorBoundary } from './SafeAdvancedMarker';
 import RouteDisplay from './RouteDisplay';
+import ItineraryLegsDisplay from './ItineraryLegsDisplay';
 import RoutePlannerPanel from './RoutePlannerPanel';
 import Chatbot from './Chatbot';
 import InfoBubble from './InfoBubble';
@@ -24,13 +32,26 @@ import SoundEngine from './SoundEngine';
 import { AnalyticsDashboard } from './AnalyticsDashboard';
 import { Skeleton, SkeletonCircle, SkeletonText } from './common/Skeleton';
 import { TripPlannerTab } from './TripPlannerTab';
+import RecommendedTab from './RecommendedTab';
+import CulturalEventsTab from './CulturalEventsTab';
 import SettingsModal from './SettingsModal';
 import TravelDiary from './TravelDiary';
 import DeveloperInsights from './DeveloperInsights';
 import WeatherRouteOptimizer from './WeatherRouteOptimizer';
-import MapLegend from './MapLegend';
 import ARView from './ARView';
+import { LiveSocialFeed } from './LiveSocialFeed';
+import { GestureOnboarding } from './GestureOnboarding';
+import { TravelerBadges } from './TravelerBadges';
+import { QuickPhrasesOverlay } from './QuickPhrases';
+import { TravelHistoryDrawer } from './TravelHistoryDrawer';
+import { OnboardingTour } from './OnboardingTour';
+import { usePrefetchEngine } from '../hooks/usePrefetchEngine';
+import { usePerformanceMonitor } from '../hooks/usePerformanceMonitor';
+import { useSocialLocation } from '../hooks/useSocialLocation';
+import { BookmarksLayer } from './BookmarksLayer';
+import { PlacesAutocompleteInput } from './PlacesAutocompleteInput';
 
+import { MINIMALIST_STYLE, TERRAIN_FOCUSED_STYLE, HIGH_CONTRAST_STYLE } from '../lib/mapStyles';
 import { auth, loginWithGoogle, logout, db } from '../lib/firebase';
 import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
 import { collection, query, getDocs, getDoc, doc, orderBy, onSnapshot, limit, deleteDoc, setDoc } from 'firebase/firestore';
@@ -39,7 +60,7 @@ import trendingPlaces from '../data/trendingPlaces.json';
 import { VantiMode } from '../types';
 import { saveOfflineArea, getOfflineAreas, renameOfflineArea, deleteOfflineArea, OfflineArea } from '../lib/offline';
 import * as d3 from 'd3';
-import { useVantiStore, VantiState } from '../store/vantiStore';
+import { useVantiStore, VantiState, MapAesthetic } from '../store/vantiStore';
 import { getTranslation } from '../lib/translations';
 import { pipeline } from '@xenova/transformers';
 
@@ -352,7 +373,7 @@ const WeatherOverlay = React.memo(({ weather }: { weather: string | null }) => {
 });
 
 const WeatherCenterOverlay = React.memo(({ lat, lng }: { lat: number; lng: number }) => {
-  const [weatherData, setWeatherData] = useState<any>(null);
+  const { currentWeatherData, setCurrentWeatherData, units } = useVantiStore();
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -360,10 +381,10 @@ const WeatherCenterOverlay = React.memo(({ lat, lng }: { lat: number; lng: numbe
     async function loadWeather() {
       setLoading(true);
       try {
-        const res = await fetch(`/api/weather/${lat.toFixed(4)}/${lng.toFixed(4)}`);
+        const res = await fetch(`/api/weather/openweathermap/${lat.toFixed(4)}/${lng.toFixed(4)}`);
         const data = await res.json();
         if (active) {
-          setWeatherData(data);
+          setCurrentWeatherData(data);
         }
       } catch (err) {
         console.warn("Failed to load map center weather:", err);
@@ -371,50 +392,86 @@ const WeatherCenterOverlay = React.memo(({ lat, lng }: { lat: number; lng: numbe
         if (active) setLoading(false);
       }
     }
+    
     loadWeather();
+    // Refresh every 10 minutes
+    const interval = setInterval(loadWeather, 600000);
+    
     return () => {
       active = false;
+      clearInterval(interval);
     };
-  }, [lat, lng]);
+  }, [lat, lng, setCurrentWeatherData]);
 
-  const { units } = useVantiStore();
+  if (!currentWeatherData) return null;
 
-  if (!weatherData || !weatherData.current) return null;
+  const temp = currentWeatherData.temp;
+  const condition = currentWeatherData.main;
+  const description = currentWeatherData.description;
+  const humidity = currentWeatherData.humidity;
+  const wind = currentWeatherData.windSpeed;
 
-  const temp = weatherData.current.temperature_2m;
-  const code = weatherData.current.weather_code;
-
-  const getWeatherDisplay = (wCode: number) => {
-    if (wCode <= 1) return { label: 'Clear', color: 'text-amber-400 font-bold', icon: Sun };
-    if (wCode <= 3) return { label: 'Cloudy', color: 'text-slate-300 font-bold', icon: Cloud };
-    if (wCode <= 67) return { label: 'Rainy', color: 'text-blue-400 font-bold', icon: CloudRain };
-    return { label: 'Snowy', color: 'text-sky-300 font-bold', icon: Snowflake };
+  const getWeatherDisplay = (main: string) => {
+    switch (main) {
+      case 'Clear': return { label: 'Clear', color: 'text-amber-400', icon: Sun };
+      case 'Clouds': return { label: 'Cloudy', color: 'text-slate-300', icon: Cloud };
+      case 'Rain': 
+      case 'Drizzle': return { label: 'Rainy', color: 'text-blue-400', icon: CloudRain };
+      case 'Thunderstorm': return { label: 'Storm', color: 'text-indigo-400', icon: Zap };
+      case 'Snow': return { label: 'Snowy', color: 'text-sky-300', icon: Snowflake };
+      default: return { label: main, color: 'text-slate-400', icon: Cloud };
+    }
   };
 
-  const info = getWeatherDisplay(code);
+  const info = getWeatherDisplay(condition);
   const Icon = info.icon;
 
   const isImperial = units === 'imperial';
-  const displayTemp = isImperial ? Math.round((temp * 9/5) + 32) : temp;
+  const displayTemp = isImperial ? Math.round((temp * 9/5) + 32) : Math.round(temp);
   const tempUnit = isImperial ? '°F' : '°C';
 
   return (
-    <div className="bg-[#0f1117]/95 backdrop-blur-2xl border border-white/10 rounded-2xl h-12 flex items-center px-3 gap-2 shadow-2xl transition-all duration-300 pointer-events-auto">
-      <div className="p-1.5 rounded-lg bg-white/5 flex items-center justify-center shrink-0">
-        {loading ? (
-          <Loader2 className="w-3.5 h-3.5 text-rose-500 animate-spin" />
-        ) : (
-          <Icon className={cn("w-4 h-4", info.color)} />
+    <motion.div 
+      initial={{ opacity: 0, y: 10, scale: 0.95 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      className="bg-[#0b0e14]/90 backdrop-blur-3xl border border-white/20 rounded-3xl h-14 flex items-center px-4 gap-3 shadow-[0_8px_32px_rgba(0,0,0,0.5)] pointer-events-auto animate-wow-glow"
+    >
+      <div className="relative">
+        <div className={cn("p-2 rounded-xl bg-white/5 flex items-center justify-center shrink-0 border border-white/5", loading && "animate-pulse")}>
+          <Icon className={cn("w-5 h-5", info.color)} />
+        </div>
+        {loading && (
+          <div className="absolute -top-1 -right-1">
+            <Loader2 className="w-3 h-3 text-indigo-400 animate-spin" />
+          </div>
         )}
       </div>
-      <div className="flex flex-col items-start min-w-[50px] select-none">
-        <span className="text-[8px] text-slate-500 font-bold uppercase tracking-widest leading-none">WEATHER</span>
-        <div className="flex items-baseline gap-1 mt-0.5">
-          <span className="text-[11px] font-black font-mono leading-none text-white">{displayTemp}{tempUnit}</span>
-          <span className="text-[8px] font-bold uppercase text-slate-400 leading-none">{info.label}</span>
+      
+      <div className="flex flex-col items-start min-w-[60px] select-none">
+        <div className="flex items-center gap-1.5">
+          <span className="text-[14px] font-black font-mono leading-none text-white tracking-tighter">{displayTemp}{tempUnit}</span>
+          <div className="w-[1px] h-3 bg-white/10" />
+          <span className="text-[10px] font-bold text-slate-300 uppercase tracking-wide">{info.label}</span>
+        </div>
+        <div className="flex items-center gap-2 mt-1">
+          <div className="flex items-center gap-0.5 opacity-60">
+            <div className="w-1 h-1 rounded-full bg-blue-400" />
+            <span className="text-[8px] font-bold text-slate-400 uppercase">{humidity}%</span>
+          </div>
+          <div className="flex items-center gap-0.5 opacity-60">
+            <Wind className="w-2.5 h-2.5 text-slate-400" />
+            <span className="text-[8px] font-bold text-slate-400 uppercase">{wind}m/s</span>
+          </div>
         </div>
       </div>
-    </div>
+      
+      <div className="w-[1px] h-8 bg-white/5 mx-1" />
+      
+      <div className="flex flex-col items-start opacity-70">
+        <span className="text-[7px] text-indigo-400 font-black uppercase tracking-[0.2em] mb-0.5">LOCAL SOURCE</span>
+        <span className="text-[9px] font-bold text-slate-500 capitalize max-w-[80px] truncate">{description}</span>
+      </div>
+    </motion.div>
   );
 });
 
@@ -706,76 +763,6 @@ const fetchNearbyHighlights = async (
 };
 
 // A minimal ErrorBoundary for map components to prevent total app crashes
-interface MapErrorBoundaryProps {
-  children: ReactNode;
-}
-interface MapErrorBoundaryState {
-  hasError: boolean;
-}
-
-class MapErrorBoundary extends Component<MapErrorBoundaryProps, MapErrorBoundaryState> {
-  state: MapErrorBoundaryState = { hasError: false };
-
-  static getDerivedStateFromError() {
-    return { hasError: true };
-  }
-  render() {
-    if (this.state.hasError) {
-      return (
-        <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-900 text-slate-400 p-8 text-center">
-            <ShieldAlert className="w-12 h-12 text-rose-500 mb-4" />
-            <h2 className="text-xl font-bold text-white mb-2">Map Interface Error</h2>
-            <p className="text-sm max-w-xs">An error occurred while rendering high-precision map markers. Recalibrating spatial engine...</p>
-            <button 
-                onClick={() => window.location.reload()}
-                className="mt-6 px-4 py-2 bg-rose-500 text-white rounded-xl text-xs font-bold uppercase tracking-wider"
-            >
-                Refresh Engine
-            </button>
-        </div>
-      );
-    }
-    return (this as any).props.children;
-  }
-}
-
-// Robust Marker wrapper with map readiness verification and projection error shielding
-const SafeAdvancedMarker = React.memo(function SafeAdvancedMarker(props: any) {
-  const map = useMap();
-  const [isProjectionReady, setIsProjectionReady] = useState(false);
-
-  useEffect(() => {
-    if (!map) return;
-    
-    // Ensure projection is available before rendering any marker
-    // This is the primary safeguard against "fromLatLngToPoint is not a function"
-    const checkProjection = () => {
-      try {
-        const projection = map.getProjection();
-        if (projection) {
-          setIsProjectionReady(true);
-          return;
-        }
-      } catch (err) {
-        console.warn("checkProjection failed under active projection:", err);
-      }
-      // Retry shortly if not ready or threw exception
-      setTimeout(checkProjection, 50);
-    };
-    
-    checkProjection();
-  }, [map]);
-
-  if (!isProjectionReady || !map) return null;
-
-  return (
-    <MapErrorBoundary>
-      <AdvancedMarker {...props}>
-        {props.children}
-      </AdvancedMarker>
-    </MapErrorBoundary>
-  );
-});
 
 /**
  * Processes a list of markers through a high-performance spatial grid system.
@@ -927,6 +914,12 @@ const getAestheticFilter = (aesthetic: string): string => {
       return 'sepia(60%) hue-rotate(-15deg) contrast(110%) brightness(95%) saturate(110%)';
     case 'cyberpunk':
       return 'hue-rotate(240deg) saturate(220%) contrast(120%) brightness(90%)';
+    case 'retro-blueprint':
+      return 'invert(80%) sepia(20%) hue-rotate(170deg) saturate(180%) contrast(110%) brightness(90%) drop-shadow(0 0 1px rgba(0,0,0,0.5))';
+    case 'midnight-cyberpunk':
+      return 'invert(100%) hue-rotate(180deg) brightness(85%) contrast(130%) saturate(200%) drop-shadow(0 0 5px rgba(255,0,255,0.2))';
+    case 'minimalist-paper':
+      return 'grayscale(15%) brightness(102%) contrast(90%) sepia(15%) opacity(95%)';
     case 'none':
     default:
       return 'none';
@@ -937,12 +930,16 @@ const BuzzMarker = React.memo(({
   userRatingCount, 
   isSelected, 
   activeWeather,
-  mode
+  mode,
+  types,
+  name
 }: { 
   userRatingCount?: number; 
   isSelected?: boolean; 
   activeWeather?: string | null;
   mode?: string;
+  types?: string[];
+  name?: string;
 }) => {
   // Local Buzz is derived from rating counts and social signals
   const buzz = userRatingCount || 0;
@@ -951,43 +948,41 @@ const BuzzMarker = React.memo(({
   const vibrancy = Math.min(100, 60 + (buzz / 1000) * 40);
   const opacity = Math.min(1, 0.7 + (buzz / 5000));
   const glow = isSelected ? 15 : Math.min(8, (buzz / 1000) * 4);
+  
+  const IconComponent = getIconForType(types, name);
+  const emojiStr = getEmojiForPlace(types, name);
 
   return (
     <div className="relative group/buzz flex flex-col items-center">
-      <svg 
-        width="32" 
-        height="32" 
-        viewBox="0 0 32 32" 
-        className="drop-shadow-2xl transition-all duration-300"
+      <div 
+        className="w-10 h-10 rounded-full flex items-center justify-center relative drop-shadow-2xl transition-all duration-300 group"
         style={{ 
+          backgroundColor: '#0f172a',
+          border: `2px solid hsla(${hue}, ${vibrancy}%, 50%, ${opacity})`,
           filter: `drop-shadow(0 0 ${glow}px hsla(${hue}, ${vibrancy}%, 50%, 0.6))`
         }}
       >
-        {/* Outer Ring */}
-        <circle 
-          cx="16" cy="16" r="14" 
-          fill="#0f172a" 
-          stroke={`hsla(${hue}, ${vibrancy}%, 50%, ${opacity})`} 
-          strokeWidth="2" 
+        <div 
+          className={cn("absolute inset-1 rounded-full", isSelected && "animate-pulse")}
+          style={{ backgroundColor: `hsla(${hue}, ${vibrancy}%, 40%, 0.2)` }}
         />
-        {/* Pulsing Core */}
-        <circle 
-          cx="16" cy="16" r="10" 
-          fill={`hsla(${hue}, ${vibrancy}%, 40%, 0.2)`} 
-          className={cn(isSelected && "animate-pulse")}
+        <div className={cn("text-slate-200 z-10 flex items-center justify-center", isSelected ? "animate-bounce" : "")}>
+          {IconComponent ? <IconComponent className="w-5 h-5" /> : <MapPin className="w-5 h-5" />}
+        </div>
+        <div 
+          className="absolute -bottom-1 w-2 h-2 rounded-full z-20 shadow-md"
+          style={{ backgroundColor: mode === 'social' ? '#f43f5e' : mode === 'genius' ? '#f59e0b' : mode === 'perks' ? '#10b981' : '#6366f1' }}
         />
-        {/* Geometric Buzz Signature */}
-        <path 
-          d="M16 8 L20 16 L16 24 L12 16 Z" 
-          fill={`hsla(${hue}, ${vibrancy}%, 70%, ${opacity})`}
-          className={isSelected ? "animate-bounce" : ""}
+        
+        {/* Pointer Base */}
+        <div 
+          className="absolute -bottom-2.5 w-3 h-3 rotate-45 border-r-[2px] border-b-[2px] z-[-1]"
+          style={{ 
+            backgroundColor: '#0f172a',
+            borderColor: `hsla(${hue}, ${vibrancy}%, 50%, ${opacity})`
+          }}
         />
-        {/* Mode Specific Small Dot */}
-        <circle 
-          cx="16" cy="28" r="2" 
-          fill={mode === 'social' ? '#f43f5e' : mode === 'genius' ? '#f59e0b' : mode === 'perks' ? '#10b981' : '#6366f1'} 
-        />
-      </svg>
+      </div>
       
       {/* Local Buzz Indicator */}
       {buzz > 800 && (
@@ -1005,8 +1000,14 @@ const BuzzMarker = React.memo(({
   );
 });
 
+import { ActivityStreamLayer } from './ActivityStreamLayer';
+import { SmartPlanner } from './SmartPlanner';
+import { FinancialTelemetry } from './FinancialTelemetry';
+import AILogPanel from './AILogPanel';
+
 const VantiMap = React.memo(function VantiMap() {
   const map = useMap();
+  const { stats: prefStats, markLoaded } = usePerformanceMonitor();
   const map3dRef = useRef<Map3DRef>(null);
   const placesLib = useMapsLibrary('places');
   const markerLib = useMapsLibrary('marker');
@@ -1023,9 +1024,21 @@ const VantiMap = React.memo(function VantiMap() {
   const routingOrigin = useVantiStore((state) => state.routingOrigin);
   const setRoutingOrigin = useVantiStore((state) => state.setRoutingOrigin);
   const selectedCategory = useVantiStore((state) => state.selectedCategory);
+  const isChatbotOpen = useVantiStore((state) => state.isChatbotOpen);
+  const setIsChatbotOpen = useVantiStore((state) => state.setIsChatbotOpen);
   const setSelectedCategory = useVantiStore((state) => state.setSelectedCategory);
   const isOmniaScanning = useVantiStore((state) => state.isOmniaScanning);
   const setIsOmniaScanning = useVantiStore((state) => state.setIsOmniaScanning);
+  const customMarkers = useVantiStore((state) => state.customMarkers);
+  const addCustomMarker = useVantiStore((state) => state.addCustomMarker);
+
+  const [addingMarkerLat, setAddingMarkerLat] = useState<number | null>(null);
+  const [addingMarkerLng, setAddingMarkerLng] = useState<number | null>(null);
+  const [addingMarkerNick, setAddingMarkerNick] = useState('');
+  const [addingMarkerNote, setAddingMarkerNote] = useState('');
+  const [addingMarkerCategory, setAddingMarkerCategory] = useState('Restaurant');
+  const [showToast, setShowToast] = useState(false);
+
   const showControls = useVantiStore((state) => state.showControls);
   const setShowControls = useVantiStore((state) => state.setShowControls);
   const themeOverride = useVantiStore((state) => state.themeOverride);
@@ -1035,6 +1048,7 @@ const VantiMap = React.memo(function VantiMap() {
   const clearRecenterTrigger = useVantiStore((state) => state.clearRecenterTrigger);
   const isInitializing = useVantiStore((state) => state.isInitializing);
   const setIsInitializing = useVantiStore((state) => state.setIsInitializing);
+
   const isAROpen = useVantiStore((state) => state.isAROpen);
   const setIsAROpen = useVantiStore((state) => state.setIsAROpen);
   const units = useVantiStore((state) => state.units);
@@ -1043,8 +1057,12 @@ const VantiMap = React.memo(function VantiMap() {
   const setMapStyle = useVantiStore((state) => state.setMapStyle);
   const mapAesthetic = useVantiStore((state) => state.mapAesthetic);
   const setMapAesthetic = useVantiStore((state) => state.setMapAesthetic);
+  const addToItinerary = useVantiStore((state) => state.addToItinerary);
+  const removeFromItinerary = useVantiStore((state) => state.removeFromItinerary);
   const isCinematicMode = useVantiStore((state) => state.isCinematicMode);
   const setIsCinematicMode = useVantiStore((state) => state.setIsCinematicMode);
+  const travelMood = useVantiStore((state) => state.travelMood);
+  const setTravelMood = useVantiStore((state) => state.setTravelMood);
   const language = useVantiStore((state) => state.language);
   const setLanguage = useVantiStore((state) => state.setLanguage);
 
@@ -1055,19 +1073,61 @@ const VantiMap = React.memo(function VantiMap() {
 
   const t = getTranslation(language);
 
+  const [is3DActive, setIs3DActive] = useState(false);
+  const [isMapIdle, setIsMapIdle] = useState(false);
+  const [expandedClusterId, setExpandedClusterId] = useState<string | null>(null);
+  const [hoveredClusterId, setHoveredClusterId] = useState<string | null>(null);
+  const [isCreateMenuOpen, setIsCreateMenuOpen] = useState(false);
+  const [showLayersMenu, setShowLayersMenu] = useState(false);
+  const [viewportLandmarks, setViewportLandmarks] = useState<any[]>([]);
+  const [activeFilter, setActiveFilter] = useState<'all' | 'recent' | 'landmarks' | 'budget'>('all');
+
+  // Landmark Extraction Logic
+  useEffect(() => {
+    if (!map || !placesLib || !isMapIdle || isAROpen) return;
+
+    const scanLandmarks = async () => {
+      const bounds = map.getBounds();
+      const center = map.getCenter();
+      if (!bounds || !center) return;
+
+      try {
+        // searchNearby requires a Circle (center + radius)
+        const { places } = await placesLib.Place.searchNearby({
+          locationRestriction: {
+            center: { lat: center.lat(), lng: center.lng() },
+            radius: 1000 // 1km radius for landmarks
+          },
+          fields: ['id', 'displayName', 'location', 'types'],
+          maxResultCount: 6,
+          includedTypes: ['landmark', 'tourist_attraction', 'museum', 'monument']
+        });
+
+        if (places) {
+          setViewportLandmarks(places.map((p: any) => ({
+            id: p.id,
+            name: p.displayName,
+            position: { lat: p.location.lat(), lng: p.location.lng() },
+            types: p.types
+          })));
+        }
+      } catch (err) {
+        console.warn("Landmark viewport scan failed:", err);
+      }
+    };
+
+    scanLandmarks();
+  }, [map, placesLib, isMapIdle, isAROpen]);
+
   useEffect(() => {
     if (map && placesLib && markerLib && geometryLib) {
+      markLoaded();
       const timer = setTimeout(() => {
         setIsInitializing(false);
       }, 1800); // 1.8-second telemetry calibration sequence
       return () => clearTimeout(timer);
     }
   }, [map, placesLib, markerLib, geometryLib, setIsInitializing]);
-
-  const [is3DActive, setIs3DActive] = useState(false);
-  const [isMapIdle, setIsMapIdle] = useState(false);
-  const [expandedClusterId, setExpandedClusterId] = useState<string | null>(null);
-  const [hoveredClusterId, setHoveredClusterId] = useState<string | null>(null);
 
   useEffect(() => {
     if (recenterTrigger && map) {
@@ -1084,8 +1144,15 @@ const VantiMap = React.memo(function VantiMap() {
 
   useEffect(() => {
     if (!map) return;
-    const l = map.addListener('idle', () => setIsMapIdle(true));
-    return () => l.remove();
+    const idleL = map.addListener('idle', () => setIsMapIdle(true));
+    const dragL = map.addListener('dragstart', () => setIsMapIdle(false));
+    const zoomL = map.addListener('zoom_changed', () => setIsMapIdle(false));
+    
+    return () => {
+      idleL.remove();
+      dragL.remove();
+      zoomL.remove();
+    };
   }, [map]);
 
   const handlePoiClickRef = useRef<any>(null);
@@ -1108,8 +1175,61 @@ const VantiMap = React.memo(function VantiMap() {
   const [showingSaved, setShowingSaved] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
   const [userLocation, setUserLocation] = useState<google.maps.LatLngLiteral | null>(DEFAULT_CENTER);
+
+  const routeOrigin = useMemo(() => {
+    if (routingOrigin) {
+      return {
+        lat: typeof routingOrigin.location?.lat === 'function' ? routingOrigin.location.lat() : (routingOrigin.location?.lat || routingOrigin.lat),
+        lng: typeof routingOrigin.location?.lng === 'function' ? routingOrigin.location.lng() : (routingOrigin.location?.lng || routingOrigin.lng)
+      };
+    }
+    return userLocation || { lat: 37.5665, lng: 126.9780 };
+  }, [routingOrigin, userLocation]);
+  
+  const routeDestination = useMemo(() => {
+    if (!selectedPlace) return { lat: 37.5665, lng: 126.9780 };
+    return { 
+      lat: typeof selectedPlace.location?.lat === 'function' ? selectedPlace.location.lat() : (selectedPlace.location?.lat || selectedPlace.lat), 
+      lng: typeof selectedPlace.location?.lng === 'function' ? selectedPlace.location.lng() : (selectedPlace.location?.lng || selectedPlace.lng)
+    };
+  }, [selectedPlace]);
+  const [isMapTilesLoading, setIsMapTilesLoading] = useState(true);
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [offlineAreas, setOfflineAreas] = useState<OfflineArea[]>([]);
+
+  // States for Coordinate Bookmarking
+  const [bookmarkingName, setBookmarkingName] = useState('');
+  const [bookmarkingCategory, setBookmarkingCategory] = useState('point_of_interest');
+  const [bookmarkingLat, setBookmarkingLat] = useState<number | null>(null);
+  const [bookmarkingLng, setBookmarkingLng] = useState<number | null>(null);
+  const [isSavingBookmark, setIsSavingBookmark] = useState(false);
+
+  const saveCoordinateBookmark = async () => {
+    if (!user || bookmarkingLat === null || bookmarkingLng === null) return;
+    setIsSavingBookmark(true);
+    const placeId = `coord-${Date.now()}`;
+    try {
+      const docRef = doc(db, 'users', user.uid, 'savedPlaces', placeId);
+      await setDoc(docRef, {
+        placeId,
+        displayName: bookmarkingName || 'Saved Coordinate',
+        lat: Number(bookmarkingLat),
+        lng: Number(bookmarkingLng),
+        savedAt: Date.now(),
+        formattedAddress: `Coordinates: ${bookmarkingLat.toFixed(5)}, ${bookmarkingLng.toFixed(5)}`,
+        types: [bookmarkingCategory],
+        userId: user.uid,
+        isCustomCoordinate: true
+      });
+      triggerHaptic('success');
+      setBookmarkingLat(null);
+      setBookmarkingLng(null);
+    } catch (err) {
+      console.error("Error creating coordinate bookmark", err);
+    } finally {
+      setIsSavingBookmark(false);
+    }
+  };
 
   // States for Recent Searches (persisted both locally and in Firestore)
   const [recentSearches, setRecentSearches] = useState<{ id: string; query: string; timestamp: number }[]>([]);
@@ -1232,21 +1352,46 @@ const VantiMap = React.memo(function VantiMap() {
 
 
 
-  const triggerHaptic = (type: HapticType) => {
+  const [hapticIntensity, setHapticIntensity] = useState(50);
+
+  const triggerHaptic = useCallback((type: HapticType, intensityOffset: number = 0) => {
     if (typeof navigator !== 'undefined' && navigator.vibrate) {
       try {
-        const factor = hapticIntensity / 50;
+        const factor = (hapticIntensity + intensityOffset) / 50;
         if (type === 'tap') navigator.vibrate(10 * factor); // Crisp click
         else if (type === 'switch') navigator.vibrate([8, 15, 8].map(v => v * factor)); // Precise physical double-click ripple for GNB switches
         else if (type === 'success') navigator.vibrate([15, 30, 15, 30, 40].map(v => v * factor)); // Rich alert success
         else if (type === 'close') navigator.vibrate([10, 30, 10].map(v => v * factor));
         else if (type === 'open_panel') navigator.vibrate([8, 20, 12].map(v => v * factor));
         else if (type === 'mode3d') navigator.vibrate([15, 25, 20].map(v => v * factor));
+        else if (type === 'impact') navigator.vibrate(20 * factor);
       } catch (e) {
         // ignore if not supported
       }
     }
-  };
+  }, [hapticIntensity]);
+
+  // Automated Solar Positioning Theme Management
+  useEffect(() => {
+    if (!userLocation || themeOverride !== 'Auto') return;
+
+    const updateSolarTheme = () => {
+      const now = new Date();
+      const times = SunCalc.getTimes(now, userLocation.lat, userLocation.lng);
+      
+      const isNight = now < times.sunrise || now > times.sunset;
+      const targetAesthetic: MapAesthetic = isNight ? 'midnight-cyberpunk' : 'none';
+      
+      if (mapAesthetic !== targetAesthetic) {
+        setMapAesthetic(targetAesthetic);
+        triggerHaptic('switch', 10);
+      }
+    };
+
+    updateSolarTheme();
+    const interval = setInterval(updateSolarTheme, 300000); // Check every 5 minutes
+    return () => clearInterval(interval);
+  }, [userLocation, themeOverride, mapAesthetic, setMapAesthetic, triggerHaptic]);
 
   const reverseGeocode = useCallback((lat: number, lng: number): Promise<string> => {
     return new Promise((resolve) => {
@@ -1384,7 +1529,6 @@ const VantiMap = React.memo(function VantiMap() {
     };
   }, [map, handleQuickSaveBookmark]);
 
-  const [hapticIntensity, setHapticIntensity] = useState(50);
 
   // Zoom velocity refs & interactive tactile feedback handler
   const lastZoomRef = useRef(16);
@@ -1422,6 +1566,7 @@ const VantiMap = React.memo(function VantiMap() {
   const [routeStyle, setRouteStyle] = useState<'classic' | 'traffic'>('classic');
   const [showTrafficLayer, setShowTrafficLayer] = useState(true);
   const [showPinsLayer, setShowPinsLayer] = useState(true);
+  const [eventPlaces, setEventPlaces] = useState<any[]>([]);
   const [mapCenter, setMapCenter] = useState<google.maps.LatLngLiteral>(DEFAULT_CENTER);
   const [debouncedCenter, setDebouncedCenter] = useState<google.maps.LatLngLiteral>(DEFAULT_CENTER);
 
@@ -1445,6 +1590,10 @@ const VantiMap = React.memo(function VantiMap() {
   const [isTransitioningStyle, setIsTransitioningStyle] = useState(false);
   const [transitionTargetStyle, setTransitionTargetStyle] = useState<'streets' | 'satellite'>('streets');
   const prevMapTypeRef = useRef(mapType);
+
+  useEffect(() => {
+    setIsMapTilesLoading(true);
+  }, [mapTheme, mapType, mapAesthetic]);
 
   useEffect(() => {
     if (prevMapTypeRef.current !== mapType) {
@@ -1480,49 +1629,68 @@ const VantiMap = React.memo(function VantiMap() {
   const [nearbyHighlights, setNearbyHighlights] = useState<any[]>([]);
   const [loadingHighlights, setLoadingHighlights] = useState(false);
   const [isHighlightsExpanded, setIsHighlightsExpanded] = useState(false);
+  const [isDiscoverMode, setIsDiscoverMode] = useState(false);
+  const [showTravelInsights, setShowTravelInsights] = useState(false);
+  const [activeMarkerFilters, setActiveMarkerFilters] = useState<string[]>(['all']);
+  const [toasts, setToasts] = useState<{ id: string; message: string; type: 'success' | 'info' | 'error' }[]>([]);
+
+  const addToast = (message: string, type: 'success' | 'info' | 'error' = 'info') => {
+    const id = Math.random().toString(36).substring(2, 9);
+    setToasts((prev) => [...prev, { id, message, type }]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 3500);
+  };
   const [bookmarkedSpotIds, setBookmarkedSpotIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
-    if (mapZoom < 15.5) {
+    if (!isDiscoverMode) {
       setNearbyHighlights([]);
       return;
     }
+  }, [isDiscoverMode]);
 
-    let active = true;
-    async function getSpots() {
-      setLoadingHighlights(true);
-      try {
-        const spots = await fetchNearbyHighlights(debouncedCenter, placesLib, map);
-        if (active) {
-          setNearbyHighlights(spots);
-        }
-      } catch (err) {
-        console.warn("Failed to load nearby highlights:", err);
-      } finally {
-        if (active) setLoadingHighlights(false);
-      }
+  useEffect(() => {
+    if (isDiscoverMode && debouncedCenter) {
+      fetchHighlightsForCenter();
     }
-    getSpots();
+  }, [debouncedCenter, isDiscoverMode]);
 
-    return () => {
-      active = false;
-    };
-  }, [debouncedCenter, mapZoom, placesLib, map]);
+  const fetchHighlightsForCenter = async () => {
+    if (!map || !placesLib || !isDiscoverMode) return;
+    setLoadingHighlights(true);
+    setNearbyHighlights([]);
+    try {
+      const spots = await fetchNearbyHighlights(debouncedCenter, placesLib, map);
+      setNearbyHighlights(spots);
+    } catch (err) {
+      console.warn("Failed to load nearby highlights:", err);
+    } finally {
+      setLoadingHighlights(false);
+    }
+  };
+
 
   // Cinematic Mode Animation Loop
   useEffect(() => {
     if (!isCinematicMode || !map) return;
 
+    const targetLoc = userLocation || DEFAULT_CENTER;
+    map.panTo(targetLoc);
+    map.setZoom(17);
+
     let frameId: number;
     let currentHeading = map.getHeading() || 0;
     
     const animate = (time: number) => {
-      currentHeading += 0.08; // Ultra-slow subtle rotation
-      const driftTilt = 45 + Math.sin(time / 4000) * 8;
+      currentHeading += 1.0; // Moderate rotation speed for active cinematic orbit
+      const driftTilt = 45 + Math.sin(time / 2000) * 10;
       
       map.moveCamera({
+        center: targetLoc,
         heading: currentHeading % 360,
-        tilt: driftTilt
+        tilt: driftTilt,
+        zoom: 17 + Math.cos(time / 4000) * 0.8
       });
 
       frameId = requestAnimationFrame(animate);
@@ -1533,7 +1701,7 @@ const VantiMap = React.memo(function VantiMap() {
     return () => {
       cancelAnimationFrame(frameId);
     };
-  }, [isCinematicMode, map]);
+  }, [isCinematicMode, map, userLocation]);
 
   // Handle Map3D camera changes to update global state
   const handleMap3DCameraChange = useCallback((e: any) => {
@@ -1554,7 +1722,31 @@ const VantiMap = React.memo(function VantiMap() {
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [downloadStage, setDownloadStage] = useState('');
-  const [activeHubTab, setActiveHubTab] = useState<'hub' | 'diary' | 'planner' | 'offline'>('hub');
+  const accessibilityScale = useVantiStore((state) => state.accessibilityScale);
+  const setAccessibilityScale = useVantiStore((state) => state.setAccessibilityScale);
+  const isPrefetchingEnabled = useVantiStore((state) => state.isPrefetchingEnabled);
+  const setIsPrefetchingEnabled = useVantiStore((state) => state.setIsPrefetchingEnabled);
+  const currentWeatherData = useVantiStore((state) => state.currentWeatherData);
+
+  // Initialize Prefetch Engine
+  usePrefetchEngine(map);
+
+  // System Accessibility Detection
+  useEffect(() => {
+    const contrastQuery = window.matchMedia('(prefers-contrast: more)');
+    const reducedMotionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+    
+    const handleAccessibilityChange = () => {
+      if (contrastQuery.matches) {
+        addToast('High Contrast Mode Detected', 'info');
+      }
+    };
+
+    contrastQuery.addEventListener('change', handleAccessibilityChange);
+    return () => contrastQuery.removeEventListener('change', handleAccessibilityChange);
+  }, [addToast]);
+
+  const [activeHubTab, setActiveHubTab] = useState<'hub' | 'diary' | 'planner' | 'offline' | 'recommended' | 'events' | 'summary'>('hub');
 
   useEffect(() => {
     if (activeMode === 'planner' && activeHubTab !== 'planner') {
@@ -1572,30 +1764,9 @@ const VantiMap = React.memo(function VantiMap() {
   const [showSpeedometer, setShowSpeedometer] = useState(true);
   const [showWeatherOverlay, setShowWeatherOverlay] = useState(true);
   const [showTrendingPins, setShowTrendingPins] = useState(true);
-  const [openWeatherMapData, setOpenWeatherMapData] = useState<any>(null);
-  const [isLoadingOpenWeather, setIsLoadingOpenWeather] = useState(false);
-
-  useEffect(() => {
-    let active = true;
-    async function loadOpenWeather() {
-      setIsLoadingOpenWeather(true);
-      try {
-        const res = await fetch(`/api/weather/openweathermap/${debouncedCenter.lat.toFixed(4)}/${debouncedCenter.lng.toFixed(4)}`);
-        const data = await res.json();
-        if (active) {
-          setOpenWeatherMapData(data);
-        }
-      } catch (err) {
-        console.warn("Failed to load map center OpenWeatherMap:", err);
-      } finally {
-        if (active) setIsLoadingOpenWeather(false);
-      }
-    }
-    loadOpenWeather();
-    return () => {
-      active = false;
-    };
-  }, [debouncedCenter]);
+  const [showActivityLayer, setShowActivityLayer] = useState(true);
+  const [showSmartPlanner, setShowSmartPlanner] = useState(false);
+  const [activeRouteInfo, setActiveRouteInfo] = useState<{distance: string, duration: string, durationMinutes: number} | null>(null);
 
   // Cinematic Flyover Logic
   const triggerFlyover = useCallback((place: any) => {
@@ -1623,17 +1794,18 @@ const VantiMap = React.memo(function VantiMap() {
   useEffect(() => {
     if (themeOverride !== 'Auto') return;
 
-    const updateTheme = () => {
-      const hour = new Date().getHours();
-      // Night mode active after 18:00 (6 PM) or before 06:00 (6 AM)
-      const shouldBeNight = hour >= 18 || hour < 6;
-      setMapTheme(shouldBeNight ? 'Night' : 'Default');
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    
+    const updateTheme = (e?: MediaQueryListEvent | MediaQueryList) => {
+      const isDark = e ? e.matches : mediaQuery.matches;
+      setMapTheme(isDark ? 'Night' : 'Default');
     };
 
-    updateTheme();
-    // Check every hour for theme transition
-    const interval = setInterval(updateTheme, 3600000);
-    return () => clearInterval(interval);
+    updateTheme(mediaQuery);
+    
+    // Listen for changes in system preference
+    mediaQuery.addEventListener('change', updateTheme);
+    return () => mediaQuery.removeEventListener('change', updateTheme);
   }, [themeOverride]);
 
   // Handle manual theme override changes
@@ -1765,11 +1937,17 @@ const VantiMap = React.memo(function VantiMap() {
       { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#e5e5e5' }, { weight: 1 }] },
       { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#dcfce7' }] },
       { featureType: 'landscape', elementType: 'geometry', stylers: [{ color: '#fafaf9' }] }
-    ]
+    ],
+    'Minimalist': MINIMALIST_STYLE,
+    'Terrain-Focused': TERRAIN_FOCUSED_STYLE,
+    'High-Contrast': HIGH_CONTRAST_STYLE
   };
 
   const [agentMarkers, setAgentMarkers] = useState<any[]>([]);
   const [activeWeather, setActiveWeather] = useState<string | null>(null);
+  
+  // Context Menu State
+  const [contextMenu, setContextMenu] = useState<{ x: number, y: number, lat: number, lng: number } | null>(null);
 
   const handleMapCommand = (name: string, args: any) => {
     if (!map) return;
@@ -1858,6 +2036,41 @@ const VantiMap = React.memo(function VantiMap() {
         break;
     }
   };
+
+  const setTrendingDestinations = useVantiStore((state) => state.setTrendingDestinations);
+  const trendingDestinations = useVantiStore((state) => state.trendingDestinations);
+
+  // Fetch trending destinations based on time and weather
+  useEffect(() => {
+    if (!map) return;
+    const center = map.getCenter()?.toJSON();
+    if (!center) return;
+
+    const fetchTrending = async () => {
+      try {
+        const localTime = new Date().toISOString();
+        const res = await fetch('/api/trending-destinations', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            localTime,
+            weather: activeWeather,
+            locationContext: center,
+            searchHistory: user ? recentSearches.map(r => r.query) : localRecentSearches
+          })
+        });
+        const data = await res.json();
+        if (data.trending) {
+          setTrendingDestinations(data.trending);
+        }
+      } catch (err) {
+        console.warn("Trending fetch failed:", err);
+      }
+    };
+
+    const timer = setTimeout(fetchTrending, 2000); // Debounce to allow weather and center to stabilize
+    return () => clearTimeout(timer);
+  }, [map, activeWeather, user, recentSearches, localRecentSearches, setTrendingDestinations]);
 
   useEffect(() => {
     if (activeMode === 'profile') {
@@ -2076,27 +2289,86 @@ const VantiMap = React.memo(function VantiMap() {
 
   const filteredMockPlaces = useMemo(() => {
     // Priority 1: Collection Filter
+    let rawList = SEOUL_MOCK_PLACES;
     if (activeCollection) {
       if (activeCollection === 'canada_working_holiday') {
-        return CANADA_MOCK_PLACES;
+        rawList = CANADA_MOCK_PLACES;
+      } else {
+        rawList = SEOUL_MOCK_PLACES.filter(p => 
+          (activeCollection === 'night_vision' && (p.types?.includes('night') || p.mode === 'perks')) ||
+          (activeCollection === 'dua_lipa_seoul' && (p.rating > 4.2 || p.matchScore > 90))
+        );
       }
-      // Mock filtering for other collections
-      return SEOUL_MOCK_PLACES.filter(p => 
-        (activeCollection === 'night_vision' && (p.types?.includes('night') || p.mode === 'perks')) ||
-        (activeCollection === 'dua_lipa_seoul' && (p.rating > 4.2 || p.matchScore > 90))
-      );
+    }
+
+    // Apply Active Marker Category Filters
+    if (!activeMarkerFilters.includes('all')) {
+      rawList = rawList.filter(p => {
+         const types = (p.types || []).map(t => t.toLowerCase());
+         return activeMarkerFilters.some(filter => {
+            if (filter === 'restaurant') return types.some(t => t.includes('restaurant') || t.includes('food') || t.includes('cafe'));
+            if (filter === 'landmark') return types.some(t => t.includes('landmark') || t.includes('museum') || t.includes('attraction'));
+            if (filter === 'hotel') return types.some(t => t.includes('hotel') || t.includes('lodging') || t.includes('accommodation'));
+            return false;
+         });
+      });
+    }
+
+    // Apply Travel Mood Filters
+    if (travelMood !== 'normal') {
+      rawList = rawList.filter(p => {
+        const types = (p.types || []).map(t => t.toLowerCase());
+        if (travelMood === 'adventure') return types.some(t => t.includes('park') || t.includes('nature') || t.includes('hiking') || t.includes('attraction'));
+        if (travelMood === 'relaxation') return types.some(t => t.includes('cafe') || t.includes('spa') || t.includes('museum') || t.includes('library'));
+        if (travelMood === 'culinary') return types.some(t => t.includes('restaurant') || t.includes('food') || t.includes('bakery') || t.includes('bar'));
+        return true;
+      });
     }
 
     // Priority 2: Mode + Category Filter
-    return SEOUL_MOCK_PLACES.filter(p => {
+    return rawList.filter(p => {
       const matchesMode = activeMode === 'all' || p.mode === activeMode;
       const matchesCategory = selectedCategory === 'All' || (p.types && p.types.some(t => t.toLowerCase() === selectedCategory.toLowerCase()));
       return matchesMode && matchesCategory;
     });
-  }, [activeMode, selectedCategory, activeCollection]);
+  }, [activeMode, selectedCategory, activeCollection, activeMarkerFilters, travelMood]);
 
   const filteredPlaces = useMemo(() => {
     let list = places.filter(place => matchesCategoryFilter(place.types, selectedCategory));
+
+    // Apply Active Marker Category Filters
+    if (!activeMarkerFilters.includes('all')) {
+      list = list.filter(place => {
+         const types = (place.types || []).map(t => t.toLowerCase());
+         return activeMarkerFilters.some(filter => {
+            if (filter === 'restaurant') return types.some(t => t.includes('restaurant') || t.includes('food') || t.includes('cafe'));
+            if (filter === 'landmark') return types.some(t => t.includes('landmark') || t.includes('museum') || t.includes('attraction'));
+            if (filter === 'hotel') return types.some(t => t.includes('hotel') || t.includes('lodging') || t.includes('accommodation'));
+            return false;
+         });
+      });
+    }
+
+    // Apply Travel Mood Filters
+    if (travelMood !== 'normal') {
+      list = list.filter(p => {
+        const types = (p.types || []).map(t => t.toLowerCase());
+        if (travelMood === 'adventure') return types.some(t => t.includes('park') || t.includes('nature') || t.includes('hiking') || t.includes('attraction'));
+        if (travelMood === 'relaxation') return types.some(t => t.includes('cafe') || t.includes('spa') || t.includes('museum') || t.includes('library'));
+        if (travelMood === 'culinary') return types.some(t => t.includes('restaurant') || t.includes('food') || t.includes('bakery') || t.includes('bar'));
+        return true;
+      });
+    }
+
+    if (travelMood !== 'normal') {
+      list = list.filter(p => {
+        const types = (p.types || []).map(t => t.toLowerCase());
+        if (travelMood === 'adventure') return types.some(t => t.includes('park') || t.includes('nature') || t.includes('hiking') || t.includes('attraction'));
+        if (travelMood === 'relaxation') return types.some(t => t.includes('cafe') || t.includes('spa') || t.includes('museum') || t.includes('library'));
+        if (travelMood === 'culinary') return types.some(t => t.includes('restaurant') || t.includes('food') || t.includes('bakery') || t.includes('bar'));
+        return true;
+      });
+    }
 
     if (searchFilter === 'nearby') {
       const origin = userLocation || DEFAULT_CENTER;
@@ -2133,7 +2405,7 @@ const VantiMap = React.memo(function VantiMap() {
     }
 
     return list;
-  }, [places, selectedCategory, searchFilter, userLocation]);
+  }, [places, selectedCategory, searchFilter, userLocation, activeMarkerFilters, travelMood]);
 
   // Fetch Suggestions
   const handleInputChange = async (value: string) => {
@@ -2271,15 +2543,30 @@ const VantiMap = React.memo(function VantiMap() {
     [setActiveMode, setSelectedCategory, setActiveCollection, setSelectedPlace, triggerHaptic]
   );
 
-  const handlePlaceClick = useCallback((place: any) => {
+  const handlePlaceClick = useCallback(async (place: any) => {
     // [ZERO-BUG CAMERA LOCK]: Prevent jumping to origin or forced centering
     triggerHaptic('tap');
-    setSelectedPlace(place);
+    
+    let finalPlace = place;
+    const placeId = place.id || place.placeId;
+    if (placeId && !place.fetchFields && placesLib && !place.isMock && !place.isVisitedJournal) {
+      try {
+        const fullPlace = new placesLib.Place({ id: placeId });
+        await fullPlace.fetchFields({
+          fields: ['id', 'displayName', 'location', 'formattedAddress', 'photos', 'rating', 'userRatingCount', 'types', 'regularOpeningHours']
+        });
+        finalPlace = fullPlace;
+      } catch (err) {
+        console.warn("Failed to enrich place details via Places API, falling back to original", err);
+      }
+    }
+
+    setSelectedPlace(finalPlace);
     setShowList(true);
     
     // Extract coordinates robustly from various Place object formats
-    const lat = typeof place.location?.lat === 'function' ? place.location.lat() : (place.location?.lat || place.lat);
-    const lng = typeof place.location?.lng === 'function' ? place.location.lng() : (place.location?.lng || place.lng);
+    const lat = typeof finalPlace.location?.lat === 'function' ? finalPlace.location.lat() : (finalPlace.location?.lat || finalPlace.lat);
+    const lng = typeof finalPlace.location?.lng === 'function' ? finalPlace.location.lng() : (finalPlace.location?.lng || finalPlace.lng);
     
     if (!lat || !lng) return;
     const targetLoc = { lat, lng };
@@ -2295,7 +2582,7 @@ const VantiMap = React.memo(function VantiMap() {
         if (!isInView || dist > 800) {
           if (is3DActive && map3dRef.current) {
             // Photorealistic 3D Cinematic Fly-to with isometric projection params
-            const isHighRated = (place.rating > 4.5) || (place.matchScore && place.matchScore > 95);
+            const isHighRated = (finalPlace.rating > 4.5) || (finalPlace.matchScore && finalPlace.matchScore > 95);
             const m3d = map3dRef.current as any;
             m3d.flyCameraTo({
               endCamera: {
@@ -2316,7 +2603,7 @@ const VantiMap = React.memo(function VantiMap() {
     
     // Sync state for UI context
     setMapCenter(targetLoc);
-  }, [map, geometryLib, is3DActive, setSelectedPlace, setShowList, mapHeading]);
+  }, [map, geometryLib, is3DActive, setSelectedPlace, setShowList, mapHeading, placesLib]);
 
   // Handle Search using Google Places API
   const handleSearch = async (text?: string) => {
@@ -2611,9 +2898,71 @@ const VantiMap = React.memo(function VantiMap() {
     );
   }, [normalizedSearchPlaces, mapZoom, mapCenter, mapBounds, isPowerEfficiencyEnabled]);
 
+  // Normalize saved places from Firestore for spatial clustering calculations
+  const normalizedSavedPlaces = useMemo(() => {
+    return savedPlaces
+      .map((savedDoc, idx) => {
+        const pinLat = Number(savedDoc.lat);
+        const pinLng = Number(savedDoc.lng);
+        
+        // Dynamic status logic (simulated for current UX)
+        let status = undefined;
+        if (idx % 5 === 0) status = { type: 'closing' as const, label: 'Closing Soon', timeLeft: '10m' };
+        else if (idx % 8 === 0) status = { type: 'event' as const, label: 'Live Show', timeLeft: '19:30' };
+
+        return {
+          ...savedDoc,
+          id: savedDoc.id || savedDoc.placeId || Math.random().toString(),
+          lat: isNaN(pinLat) ? 0 : pinLat,
+          lng: isNaN(pinLng) ? 0 : pinLng,
+          displayName: savedDoc.displayName || savedDoc.name || 'Saved Location',
+          status
+        };
+      })
+      .filter(p => {
+        if (p.lat === 0 || p.lng === 0) return false;
+        
+        if (activeFilter === 'all') return true;
+        if (activeFilter === 'recent') {
+          return true; // Simplified
+        }
+        if (activeFilter === 'budget') {
+          return (p.priceLevel && p.priceLevel <= 1) || p.types?.includes('park') || p.types?.includes('museum');
+        }
+        if (activeFilter === 'landmarks') return false;
+        return true;
+      });
+  }, [savedPlaces, activeFilter]);
+
+  const filteredLandmarks = (activeFilter === 'all' || activeFilter === 'landmarks') ? viewportLandmarks : [];
+
+  // High performance spatial grid clustering for saved places
+  const clusteredSavedPlaces = useMemo(() => {
+    return processSpatialGrid(
+      normalizedSavedPlaces,
+      mapZoom,
+      mapCenter,
+      mapBounds,
+      isPowerEfficiencyEnabled
+    );
+  }, [normalizedSavedPlaces, mapZoom, mapCenter, mapBounds, isPowerEfficiencyEnabled]);
+
+  const realTimePeers = useSocialLocation(activeMode === 'social');
+
   // Viewport-bounds clipping for active friends list to improve visual density & DOM performance
   const visibleFriends = useMemo(() => {
-    return MOCK_FRIENDS.filter(friend => {
+    // Merge baseline mock friends with live Firestore synchronized peers
+    const allPeers: UserFriend[] = [...MOCK_FRIENDS, ...realTimePeers.map(p => ({
+      id: p.uid,
+      name: p.displayName,
+      avatar: p.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${p.uid}`,
+      lat: p.lat,
+      lng: p.lng,
+      activeLocation: 'Live Session',
+      lastActive: 'Just now',
+    }))];
+
+    return allPeers.filter(friend => {
       let minLat = -90, maxLat = 90, minLng = -180, maxLng = 180;
       const hasValidBounds = mapBounds && typeof mapBounds.contains === 'function';
       if (!hasValidBounds) {
@@ -2630,7 +2979,7 @@ const VantiMap = React.memo(function VantiMap() {
       }
       return friend.lat >= minLat && friend.lat <= maxLat && friend.lng >= minLng && friend.lng <= maxLng;
     });
-  }, [mapBounds, mapZoom, mapCenter]);
+  }, [MOCK_FRIENDS, realTimePeers, mapBounds, mapZoom, mapCenter]);
 
   // Viewport-bounds clipping for agent markers
   const visibleAgentMarkers = useMemo(() => {
@@ -2654,6 +3003,7 @@ const VantiMap = React.memo(function VantiMap() {
   }, [agentMarkers, mapBounds, mapZoom, mapCenter]);
 
   const handleCameraChange = useCallback((e: any) => {
+    setIsMapTilesLoading(true);
     const newCenter = e.detail.center;
     setMapCenter(prev => {
       if (Math.abs(prev.lat - newCenter.lat) < 1e-7 && Math.abs(prev.lng - newCenter.lng) < 1e-7) return prev;
@@ -2674,7 +3024,149 @@ const VantiMap = React.memo(function VantiMap() {
   }, [map, handleZoomChangeHaptic]);
 
   return (
-    <div className="relative w-full h-screen bg-[#0a0c10] overflow-hidden select-none text-slate-100 font-sans">
+    <div 
+      className="relative w-full h-screen bg-[#0a0c10] overflow-hidden select-none text-slate-100 font-sans"
+      style={{ fontSize: `${16 * accessibilityScale}px` } as React.CSSProperties}
+    >
+      <OnboardingTour />
+       {/* Toast Notification Engine */}
+      <div className="fixed top-24 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2 w-full max-w-sm z-[1000] pointer-events-none">
+        <AnimatePresence>
+          {toasts.map((toast) => (
+            <motion.div
+              key={toast.id}
+              initial={{ opacity: 0, y: -20, scale: 0.9 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.9, y: -20 }}
+              className={cn(
+                "px-5 py-3 rounded-2xl shadow-2xl backdrop-blur-3xl border flex items-center gap-3 pointer-events-auto",
+                toast.type === 'success' ? "bg-emerald-500/90 border-emerald-400 text-white" :
+                toast.type === 'error' ? "bg-rose-500/90 border-rose-400 text-white" :
+                "bg-[#0f1117]/95 border-white/10 text-white"
+              )}
+            >
+              <div className="w-2 h-2 rounded-full bg-current animate-pulse" />
+              <span className="text-[10px] font-black uppercase tracking-[0.1em]">{toast.message}</span>
+            </motion.div>
+          ))}
+        </AnimatePresence>
+      </div>
+
+      {/* Travel Analytics Drawer */}
+      <TravelHistoryDrawer 
+        isOpen={showTravelInsights}
+        onClose={() => setShowTravelInsights(false)}
+        stats={{
+          totalDistance: 12450,
+          countriesVisited: 8,
+          citiesVisited: 24,
+          topDestinations: [
+            { name: 'Seoul', visits: 12, color: '#f43f5e' },
+            { name: 'Vancouver', visits: 8, color: '#3b82f6' },
+            { name: 'Tokyo', visits: 5, color: '#f59e0b' },
+            { name: 'Berlin', visits: 3, color: '#10b981' }
+          ]
+        }}
+      />
+
+      <AnimatePresence>
+        {contextMenu && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9, y: 10 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.9 }}
+            style={{ left: contextMenu.x, top: contextMenu.y }}
+            className="fixed z-[300] w-64 bg-[#0f1117]/95 backdrop-blur-xl border border-white/10 rounded-2xl p-2 shadow-[0_20px_50px_rgba(0,0,0,0.5)] overflow-hidden"
+          >
+            <div className="px-3 py-2 mb-1 border-b border-white/5">
+              <span className="text-[9px] font-black uppercase text-slate-500 tracking-widest">Map Interactions</span>
+              <div className="text-[10px] text-white/40 font-mono mt-0.5 truncate">
+                {contextMenu.lat.toFixed(5)}, {contextMenu.lng.toFixed(5)}
+              </div>
+            </div>
+            
+            <button 
+              onClick={() => {
+                addToItinerary({ 
+                  id: `context-${Date.now()}`, 
+                  displayName: 'Custom Stop', 
+                  lat: contextMenu.lat, 
+                  lng: contextMenu.lng,
+                  types: ['point_of_interest'] 
+                });
+                addToast("Added to itinerary", "success");
+                setContextMenu(null);
+                triggerHaptic('tap');
+              }}
+              className="flex items-center gap-3 w-full p-2.5 rounded-xl hover:bg-white/5 transition-colors text-left group"
+            >
+              <div className="p-1.5 rounded-lg bg-indigo-500/10 text-indigo-400 group-hover:bg-indigo-500 group-hover:text-white transition-colors">
+                <Calendar className="w-3.5 h-3.5" />
+              </div>
+              <span className="text-xs font-bold text-slate-200">Add to Itinerary</span>
+            </button>
+
+            <button 
+              onClick={() => {
+                setBookmarkingLat(contextMenu.lat);
+                setBookmarkingLng(contextMenu.lng);
+                setBookmarkingName('Saved Spot');
+                addToast("Prepared bookmark", "info");
+                setContextMenu(null);
+                triggerHaptic('tap');
+              }}
+              className="flex items-center gap-3 w-full p-2.5 rounded-xl hover:bg-white/5 transition-colors text-left group"
+            >
+              <div className="p-1.5 rounded-lg bg-rose-500/10 text-rose-400 group-hover:bg-rose-500 group-hover:text-white transition-colors">
+                <Star className="w-3.5 h-3.5" />
+              </div>
+              <span className="text-xs font-bold text-slate-200">Save to Bookmarks</span>
+            </button>
+
+            <button 
+              onClick={() => {
+                setMapCenter({ lat: contextMenu.lat, lng: contextMenu.lng });
+                setMapZoom(17);
+                addToast("Recalibrating view...", "info");
+                setContextMenu(null);
+                triggerHaptic('impact');
+              }}
+              className="flex items-center gap-3 w-full p-2.5 rounded-xl hover:bg-white/5 transition-colors text-left group"
+            >
+              <div className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 group-hover:bg-emerald-500 group-hover:text-white transition-colors">
+                <Info className="w-3.5 h-3.5" />
+              </div>
+              <span className="text-xs font-bold text-slate-200">View Nearby Info</span>
+            </button>
+
+            <div className="h-px bg-white/5 my-1" />
+            
+            <button 
+              onClick={() => setContextMenu(null)}
+              className="flex items-center gap-3 w-full p-2.5 rounded-xl hover:bg-rose-500/10 hover:text-rose-400 transition-colors text-left text-slate-500"
+            >
+              <X className="w-3.5 h-3.5 translate-x-1" />
+              <span className="text-[10px] font-black uppercase tracking-widest pl-1">Dismiss</span>
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showSmartPlanner && (
+          <SmartPlanner 
+            bookmarks={savedPlaces} 
+            travelHistory={userSnapshots}
+            onClose={() => setShowSmartPlanner(false)} 
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {activeRouteInfo && (
+          <FinancialTelemetry routeInfo={activeRouteInfo} />
+        )}
+      </AnimatePresence>
       
       <motion.div
         animate={
@@ -2754,14 +3246,31 @@ const VantiMap = React.memo(function VantiMap() {
           defaultHeading={mapHeading}
           mapId={MAP_ID}
           renderingType="VECTOR"
-          colorScheme={['Night', 'Simulation', 'Genie', 'Cosmic', 'Neo-Tokyo', 'Midnight'].includes(mapTheme) ? "DARK" : "LIGHT"}
+          colorScheme={['Night', 'Simulation', 'Genie', 'Cosmic', 'Neo-Tokyo', 'Midnight', 'High-Contrast'].includes(mapTheme) ? "DARK" : "LIGHT"}
           mapTypeId={isTerrainActive ? 'terrain' : mapType}
           disableDefaultUI={true}
           gestureHandling="greedy"
           tiltInteractionEnabled={!perspectiveLock}
           headingInteractionEnabled={!perspectiveLock}
           onCameraChanged={handleCameraChange}
-          {...({ onPoiClick: handlePoiClick } as any)}
+          onTilesloaded={() => setIsMapTilesLoading(false)}
+          onIdle={() => setIsMapTilesLoading(false)}
+          onClick={() => setContextMenu(null)}
+          onContextmenu={(e: any) => {
+            const latLng = e.detail.latLng;
+            // Use e.domEvent if available, or try to find it on the event object
+            const domEvent = e.domEvent || e.detail.domEvent;
+            if (latLng && domEvent) {
+              setContextMenu({ 
+                x: domEvent.clientX, 
+                y: domEvent.clientY,
+                lat: latLng.lat,
+                lng: latLng.lng
+              });
+              triggerHaptic('impact');
+            }
+          }}
+          {...({ onPoiClick: (e: any) => { handlePoiClick(e); setContextMenu(null); } } as any)}
           options={{
             isFractionalZoomEnabled: true,
             scaleControl: false,
@@ -2786,6 +3295,24 @@ const VantiMap = React.memo(function VantiMap() {
         >
           <WeatherMapLayer />
 
+          {/* Viewport Landmarks Layer */}
+          {filteredLandmarks.map((l) => (
+            <SafeAdvancedMarker
+              key={`viewport-landmark-${l.id}`}
+              position={l.position}
+              title={l.name}
+              onClick={() => handlePlaceClick({
+                id: l.id,
+                displayName: l.name,
+                lat: l.position.lat,
+                lng: l.position.lng,
+                types: l.types
+              })}
+            >
+              <LandmarkMarker id={l.id} name={l.name} type={l.types?.[0]} isSelected={selectedPlace?.id === l.id} />
+            </SafeAdvancedMarker>
+          ))}
+
           {/* Persistent Visited Journal Pins Layer */}
           {isMapIdle && map && markerLib && userSnapshots.map((snap) => (
             <SafeAdvancedMarker
@@ -2809,28 +3336,171 @@ const VantiMap = React.memo(function VantiMap() {
                 whileHover={{ scale: 1.15 }}
                 className="relative flex flex-col items-center cursor-pointer group"
               >
-                {/* Pulsing glow underlay */}
-                <div className="absolute inset-0 rounded-full bg-emerald-500/20 animate-ping scale-125 opacity-40" style={{ animationDuration: '3s' }} />
-                
-                {/* Luxury Emerald/Amber outer ring */}
-                <div className="w-9 h-9 rounded-full bg-gradient-to-tr from-emerald-500 via-teal-400 to-amber-400 p-[1.5px] shadow-[0_5px_15px_rgba(16,185,129,0.35)] relative z-10 flex items-center justify-center border border-white/20">
-                  <div className="w-full h-full rounded-full bg-slate-950 flex items-center justify-center text-emerald-400 group-hover:text-amber-300 transition-colors">
-                    <Check className="w-3.5 h-3.5 stroke-[3px]" />
-                  </div>
-                </div>
+                <MapMarkerIcon theme="emerald" showEmoji types={['diary']} name={snap.locationName} />
 
                 {/* Pin hover tooltip */}
                 <div className="absolute bottom-10 bg-slate-950/95 border border-emerald-500/30 px-3 py-1.5 rounded-lg text-[10px] font-sans font-bold text-slate-100 scale-0 group-hover:scale-100 transition-all origin-bottom shadow-xl whitespace-nowrap z-20 pointer-events-none flex flex-col items-center gap-0.5">
                   <span className="text-emerald-400 text-[8px] tracking-widest font-mono uppercase">VISITED MEMORY</span>
                   <span>{snap.locationName}</span>
                 </div>
-
-                <div className="w-1.5 h-1.5 bg-emerald-500 rotate-45 -mt-0.5 border-r border-b border-indigo-950" />
               </motion.div>
             </SafeAdvancedMarker>
           ))}
+
+          {/* Custom Saved Places Pins Layer from Firestore with Spatial Grid Clustering */}
+          {isMapIdle && map && markerLib && clusteredSavedPlaces.map((savedDoc, idx) => {
+            const savedClusterId = `saved-cluster-${savedDoc.lat?.toFixed(5)}-${savedDoc.lng?.toFixed(5)}`;
+            const isSavedClusterExpanded = expandedClusterId === savedClusterId || hoveredClusterId === savedClusterId;
+
+            const key = savedDoc.isCluster 
+              ? `saved-cluster-${savedDoc.id || idx}-${savedDoc.lat}-${savedDoc.lng}`
+              : `saved-pin-${savedDoc.id || savedDoc.placeId}`;
+
+            return (
+              <SafeAdvancedMarker
+                key={key}
+                position={{ lat: savedDoc.lat, lng: savedDoc.lng }}
+                title={savedDoc.isCluster ? `${savedDoc.clusterCount} Saved Places` : savedDoc.displayName}
+                onClick={() => {
+                  if (savedDoc.isCluster) {
+                    setExpandedClusterId(expandedClusterId === savedClusterId ? null : savedClusterId);
+                    triggerHaptic('tap');
+                  } else {
+                    handlePlaceClick({
+                      id: savedDoc.placeId,
+                      displayName: savedDoc.displayName,
+                      formattedAddress: savedDoc.address,
+                      lat: savedDoc.lat,
+                      lng: savedDoc.lng,
+                      isSavedPlace: true,
+                      types: ['point_of_interest']
+                    });
+                  }
+                }}
+              >
+                <motion.div
+                  initial={{ scale: 0, scaleY: 0 }}
+                  animate={{ scale: 1, scaleY: 1 }}
+                  whileHover={{ scale: 1.08 }}
+                  className="relative flex flex-col items-center"
+                  onMouseEnter={() => {
+                    if (savedDoc.isCluster) {
+                      setHoveredClusterId(savedClusterId);
+                    }
+                  }}
+                  onMouseLeave={() => {
+                    if (savedDoc.isCluster) {
+                      setHoveredClusterId(null);
+                    }
+                  }}
+                >
+                  {savedDoc.isCluster ? (
+                    <div className="relative flex items-center justify-center">
+                      {/* Main gold/amber master cluster badge */}
+                      <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-amber-600 via-yellow-500 to-orange-500 p-[2px] shadow-[0_5px_20px_rgba(245,158,11,0.5)] z-20 relative flex items-center justify-center border border-white/20 hover:scale-110 transition-transform">
+                        <div className="w-full h-full rounded-full bg-slate-950 flex items-center justify-center text-amber-400 text-[10px] font-black">
+                          {isSavedClusterExpanded ? '✕' : savedDoc.clusterCount}
+                        </div>
+                      </div>
+
+                      {/* Ripple pulse effects when not expanded */}
+                      {!isSavedClusterExpanded && (
+                        <div className="absolute w-12 h-12 rounded-full border border-amber-500/30 animate-pulse z-0" />
+                      )}
+
+                      {/* Fan out saved places */}
+                      <AnimatePresence>
+                        {isSavedClusterExpanded && savedDoc.members?.map((m: any, j: number) => {
+                          const count = savedDoc.members?.length || 1;
+                          const angle = (j / count) * 2 * Math.PI;
+                          const R = 64; // Fan out radius
+                          const x = Math.cos(angle) * R;
+                          const y = Math.sin(angle) * R;
+
+                          return (
+                            <motion.div
+                              key={`fan-saved-${m.id || j}`}
+                              initial={{ x: 0, y: 0, scale: 0, opacity: 0 }}
+                              animate={{ x, y, scale: 1, opacity: 1 }}
+                              exit={{ x: 0, y: 0, scale: 0, opacity: 0 }}
+                              transition={{ type: "spring", damping: 15, stiffness: 180, delay: j * 0.03 }}
+                              className="absolute z-10"
+                              style={{ originX: 0.5, originY: 0.5 }}
+                            >
+                              {/* connecting dashed lines */}
+                              <svg className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 overflow-visible pointer-events-none z-0" style={{ width: 0, height: 0 }}>
+                                <line
+                                  x1={0}
+                                  y1={0}
+                                  x2={-x}
+                                  y2={-y}
+                                  stroke="#f59e0b"
+                                  strokeWidth="1.5"
+                                  strokeDasharray="3 3"
+                                  className="opacity-75"
+                                />
+                              </svg>
+
+                              {/* Fanout saved marker spot */}
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  e.preventDefault();
+                                  handlePlaceClick({
+                                    id: m.placeId,
+                                    displayName: m.displayName,
+                                    formattedAddress: m.address,
+                                    lat: m.lat,
+                                    lng: m.lng,
+                                    isSavedPlace: true,
+                                    types: ['point_of_interest']
+                                  });
+                                  triggerHaptic('open_panel');
+                                }}
+                                className="cursor-pointer shadow-[0_4px_12px_rgba(245,158,11,0.4)] relative flex flex-col items-center group/item hover:scale-120 transition-transform w-8 h-8 rounded-full bg-gradient-to-tr from-amber-500 to-orange-500 p-[1px] border border-white/20 justify-center bg-slate-950"
+                              >
+                                <div className="w-full h-full rounded-full bg-slate-950 flex items-center justify-center text-amber-400">
+                                  {m.customEmoji ? (
+                                    <span className="text-sm">{m.customEmoji}</span>
+                                  ) : (
+                                    <Star className="w-3 h-3 fill-amber-400" />
+                                  )}
+                                </div>
+
+                                {/* Hover tooltip for details */}
+                                <div className="absolute bottom-full mb-1.5 bg-slate-950/95 border border-amber-500/35 text-[9px] font-bold text-white px-2 py-1 rounded shadow-xl whitespace-nowrap pointer-events-none opacity-0 group-hover/item:opacity-100 transition-opacity z-50 flex flex-col items-center">
+                                  <span className="text-[7px] text-amber-400 uppercase tracking-widest font-mono">SAVED SPOT</span>
+                                  <span>{m.displayName}</span>
+                                </div>
+                              </button>
+                            </motion.div>
+                          );
+                        })}
+                      </AnimatePresence>
+                    </div>
+                  ) : (
+                    <div className="relative flex flex-col items-center group">
+                      <MapMarkerIcon theme="amber" types={savedDoc.types} name={savedDoc.displayName} customEmoji={savedDoc.customEmoji} status={savedDoc.status} />
+
+                      {/* Pin hover tooltip */}
+                      <div className="absolute bottom-10 bg-slate-950/95 border border-amber-500/35 px-3 py-1.5 rounded-lg text-[10px] font-sans font-bold text-slate-100 scale-0 group-hover:scale-100 transition-all origin-bottom shadow-xl whitespace-nowrap z-20 pointer-events-none flex flex-col items-center gap-0.5">
+                        <span className="text-amber-400 text-[8px] tracking-widest font-mono uppercase">SAVED LOCATION</span>
+                        <span>{savedDoc.displayName}</span>
+                      </div>
+                    </div>
+                  )}
+                </motion.div>
+              </SafeAdvancedMarker>
+            );
+          })}
           {/* Live Traffic Flow Layer using D3.js */}
           {showTrafficLayer && <D3TrafficLayer mapTheme={mapTheme} activeMode={activeMode} isPowerEfficiencyEnabled={isPowerEfficiencyEnabled} />}
+
+          {/* OpenWeatherMap Precipitation Layer Overlay */}
+          <WeatherMapLayer />
+          
+          <BookmarksLayer />
+          {showActivityLayer && <ActivityStreamLayer />}
 
           {/* Render Live Curation Mock Places with Clustering - Only when map and marker library are ready */}
        {showPinsLayer && isMapIdle && map && markerLib && clusteredMockPlaces.map((p, idx) => {
@@ -2924,6 +3594,8 @@ const VantiMap = React.memo(function VantiMap() {
                               isSelected={selectedPlace?.id === m.id}
                               activeWeather={activeWeather}
                               mode={m.mode}
+                              types={m.types}
+                              name={m.displayName || (m as any).name}
                             />
                             
                             {/* Hover Tooltip displaying Spot Name */}
@@ -2960,6 +3632,8 @@ const VantiMap = React.memo(function VantiMap() {
                     isSelected={selectedPlace?.id === p.id}
                     activeWeather={activeWeather}
                     mode={p.mode}
+                    types={p.types}
+                    name={p.displayName || (p as any).name}
                   />
                 </motion.div>
               )}
@@ -3065,7 +3739,7 @@ const VantiMap = React.memo(function VantiMap() {
                 ⚡ Optimal Rendezvous
               </span>
               <div className="relative w-10 h-10 rounded-xl border-2 border-amber-400 bg-slate-950/95 flex items-center justify-center text-amber-400 shadow-[0_0_25px_rgba(245,158,11,0.8)]">
-                <MapPin className="w-5 h-5 animate-pulse" />
+                <span className="text-xl">🎯</span>
                 <WeatherOverlay weather={activeWeather} />
               </div>
               <div className="absolute inset-0 rounded-xl bg-amber-400/20 animate-ping -z-10" />
@@ -3097,8 +3771,8 @@ const VantiMap = React.memo(function VantiMap() {
               custom={{ idx: idx + 10, scale: dynamicScale }}
               className="group relative flex flex-col items-center"
             >
-              <div className="relative w-8 h-8 bg-indigo-500 rounded-full flex items-center justify-center border-2 border-white shadow-xl hover:scale-110 transition-transform">
-                <Sparkles className="w-4 h-4 text-white" />
+              <div className="relative">
+                <MapMarkerIcon theme="indigo" types={[p.type]} name={p.name} showEmoji={false} />
                 <WeatherOverlay weather={activeWeather} />
               </div>
               <div className="shadow-2xl opacity-0 group-hover:opacity-100 transition-opacity absolute bottom-full mb-2 bg-slate-900 border border-slate-700 p-2 rounded-lg pointer-events-none min-w-[120px] z-50">
@@ -3197,16 +3871,13 @@ const VantiMap = React.memo(function VantiMap() {
                                 handlePlaceClick(m);
                                 triggerHaptic('open_panel');
                               }}
-                              className={cn(
-                                "cursor-pointer shadow-lg relative flex flex-col items-center group/item hover:scale-115 transition-transform",
-                                getMarkerStyles(markerTheme, selectedPlace?.id === m.id)
-                              )}
+                              className="cursor-pointer relative flex flex-col items-center group/item"
                             >
-                              <MapPin className={cn("w-4 h-4", selectedPlace?.id === m.id ? "text-white" : "text-indigo-400")} />
+                              <MapMarkerIcon theme={markerTheme} types={m.types} name={m.displayName || (m as any).name} isSelected={selectedPlace?.id === m.id} status={(m as any).status} />
                               
                               {/* Hover Tooltip displaying Spot Name */}
                               <div className="absolute bottom-full mb-1 bg-slate-950/90 border border-slate-800 text-[9px] font-bold text-white px-1.5 py-0.5 rounded shadow-lg whitespace-nowrap pointer-events-none opacity-0 group-hover/item:opacity-100 transition-opacity z-50">
-                                {m.displayName || m.name}
+                                {m.displayName || (m as any).name}
                               </div>
                             </button>
                           </motion.div>
@@ -3248,6 +3919,8 @@ const VantiMap = React.memo(function VantiMap() {
                         userRatingCount={place.userRatingCount} 
                         isSelected={selectedPlace?.id === place.id}
                         activeWeather={activeWeather}
+                        types={place.types}
+                        name={place.displayName || (place as any).name}
                       />
                     </motion.div>
                   </div>
@@ -3293,6 +3966,39 @@ const VantiMap = React.memo(function VantiMap() {
           </SafeAdvancedMarker>
         )}
 
+        {/* Custom User Markers Layer */}
+        {isMapIdle && map && markerLib && customMarkers.map((cm: any) => (
+          <SafeAdvancedMarker
+            key={`custom-marker-${cm.id}`}
+            position={{ lat: cm.lat, lng: cm.lng }}
+            onClick={() => handlePlaceClick({
+              id: cm.id,
+              lat: cm.lat,
+              lng: cm.lng,
+              displayName: cm.nickname,
+              name: cm.nickname,
+              types: ['custom_marker'],
+              editorialSummary: cm.note,
+              address: cm.note,
+            })}
+          >
+            <motion.div 
+               initial={{ opacity: 0, y: -50, scale: 0.8 }} 
+               animate={{ opacity: 1, y: 0, scale: 1 }} 
+               transition={{ type: "spring", bounce: 0.6, duration: 0.8 }}
+               className="relative group cursor-pointer"
+            >
+              <div className="w-8 h-8 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-full flex items-center justify-center border-2 border-white shadow-xl">
+                 <MapPin className="w-4 h-4 text-white" />
+              </div>
+              <div className="shadow-2xl opacity-0 group-hover:opacity-100 transition-opacity absolute bottom-full -ml-[40px] left-1/2 mb-2 bg-slate-900 border border-slate-700 p-2 rounded-lg pointer-events-none min-w-[120px] z-50 flex flex-col items-center">
+                  <p className="text-[10px] font-bold text-white leading-tight text-center">{cm.nickname}</p>
+                  <p className="text-[8px] text-indigo-400 uppercase tracking-tighter mt-0.5 whitespace-nowrap text-center">{cm.category || 'My Marker'}</p>
+              </div>
+            </motion.div>
+          </SafeAdvancedMarker>
+        ))}
+
         {/* Custom Animated Trending Pins Layer */}
         {showTrendingPins && isMapIdle && map && markerLib && trendingPlaces.map((place: any, idx: number) => {
           return (
@@ -3313,8 +4019,8 @@ const VantiMap = React.memo(function VantiMap() {
                 
                 {/* Custom Glowing Neon Core */}
                 <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-rose-500 via-pink-500 to-amber-400 p-[2px] shadow-[0_4px_15px_rgba(244,63,94,0.4)] relative z-10 hover:scale-115 active:scale-95 transition-all duration-300 flex items-center justify-center border-t border-white/45">
-                  <div className="w-full h-full rounded-full bg-slate-950 flex items-center justify-center text-white">
-                    <Flame className="w-4.5 h-4.5 text-rose-500 fill-rose-500 animate-pulse" />
+                  <div className="w-full h-full rounded-full bg-slate-950 flex items-center justify-center text-sm">
+                    {getEmojiForPlace(place.types, place.displayName)}
                   </div>
                 </div>
 
@@ -3336,30 +4042,57 @@ const VantiMap = React.memo(function VantiMap() {
           );
         })}
 
+        {/* Event Places Layer */}
+        {showPinsLayer && isMapIdle && map && markerLib && eventPlaces.map((evt: any, idx: number) => {
+          if (!evt.location) return null;
+          const lat = typeof evt.location.lat === 'function' ? evt.location.lat() : evt.location.lat;
+          const lng = typeof evt.location.lng === 'function' ? evt.location.lng() : evt.location.lng;
+          return (
+            <SafeAdvancedMarker 
+              key={`evt-${evt.id || idx}`}
+              position={{ lat, lng }}
+              onClick={() => handlePlaceClick(evt)}
+            >
+              <motion.div 
+                variants={markerVariants}
+                initial="hidden"
+                animate="visible"
+                custom={{ idx: idx + 10, scale: dynamicScale }}
+                className="group relative flex flex-col items-center cursor-pointer"
+              >
+                <div className="relative">
+                  <MapMarkerIcon theme="fuchsia" types={evt.types || []} name={evt.displayName} showEmoji={false} />
+                  <WeatherOverlay weather={activeWeather} />
+                </div>
+                <div className="shadow-2xl opacity-0 group-hover:opacity-100 transition-opacity absolute bottom-full mb-2 bg-slate-900 border border-slate-700 p-2 rounded-lg pointer-events-none min-w-[120px] z-50">
+                  <p className="text-[10px] font-bold text-white leading-tight">{evt.displayName}</p>
+                  <p className="text-[8px] text-fuchsia-400 uppercase tracking-tighter mt-0.5 whitespace-nowrap">Local Cultural Event</p>
+                </div>
+              </motion.div>
+            </SafeAdvancedMarker>
+          );
+        })}
+
         {/* Route Calculations */}
         {((routingOrigin && selectedPlace && routingOrigin.id !== selectedPlace.id) || (!routingOrigin && userLocation && selectedPlace)) && (
           <RouteDisplay 
-            origin={
-              routingOrigin ? {
-                lat: typeof routingOrigin.location?.lat === 'function' ? routingOrigin.location.lat() : (routingOrigin.location?.lat || routingOrigin.lat),
-                lng: typeof routingOrigin.location?.lng === 'function' ? routingOrigin.location.lng() : (routingOrigin.location?.lng || routingOrigin.lng)
-              } : userLocation!
-            } 
-            destination={{ 
-              lat: typeof selectedPlace.location?.lat === 'function' ? selectedPlace.location.lat() : (selectedPlace.location?.lat || selectedPlace.lat), 
-              lng: typeof selectedPlace.location?.lng === 'function' ? selectedPlace.location.lng() : (selectedPlace.location?.lng || selectedPlace.lng)
-            }} 
+            origin={routeOrigin} 
+            destination={routeDestination} 
             userLocation={userLocation}
             onDeviate={() => triggerHaptic('impact')}
+            onRouteInfoUpdate={setActiveRouteInfo}
           />
         )}
+
+        {/* Custom Dynamic Itinerary Connectors */}
+        <ItineraryLegsDisplay />
       </Map>
       </MapErrorBoundary>
       )}
 
       {/* Real-time Atmospheric Dynamic Overlay (Clouds, Rain, Storm, Sun flares or Sno drift) */}
-      {showWeatherOverlay && openWeatherMapData && (
-        <AtmosphericOverlay weather={openWeatherMapData} />
+      {showWeatherOverlay && currentWeatherData && (
+        <AtmosphericOverlay weather={currentWeatherData} />
       )}
       </div>
 
@@ -3390,6 +4123,41 @@ const VantiMap = React.memo(function VantiMap() {
         )}
         {isCinematicMode && (
           <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[140] pointer-events-none flex flex-col justify-between"
+          >
+            {/* Top Letterbox */}
+            <div className="h-[12vh] bg-black/95 border-b border-white/5 flex items-end px-8 pb-4">
+              <div className="flex gap-4 opacity-50">
+                <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                <span className="font-mono text-[10px] text-white tracking-widest uppercase">REC • VANTi Cine-Core</span>
+              </div>
+            </div>
+            
+            {/* Side UI elements (reticles) */}
+            <div className="absolute inset-x-8 inset-y-32 border-x border-white/5 pointer-events-none opacity-20">
+              <div className="absolute top-1/2 left-0 w-2 h-px bg-white -translate-x-1/2" />
+              <div className="absolute top-1/2 right-0 w-2 h-px bg-white translate-x-1/2" />
+              <div className="absolute top-0 left-1/2 w-px h-2 bg-white -translate-y-1/2" />
+              <div className="absolute bottom-0 left-1/2 w-px h-2 bg-white translate-y-1/2" />
+              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-16 h-16 border border-white/30 rounded-full" />
+              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-1 h-1 bg-white/50 rounded-full" />
+            </div>
+
+            {/* Bottom Letterbox */}
+            <div className="h-[12vh] bg-black/95 border-t border-white/5 flex flex-col items-start justify-start px-8 pt-4">
+               <div className="flex justify-between w-full opacity-50">
+                 <span className="font-mono text-[10px] text-white tracking-widest uppercase">ISO 800 • F/2.8 • 1/50</span>
+                 <span className="font-mono text-[10px] text-white tracking-widest uppercase">{new Date().toISOString()}</span>
+               </div>
+            </div>
+          </motion.div>
+        )}
+
+        {isCinematicMode && (
+          <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 20 }}
@@ -3408,222 +4176,355 @@ const VantiMap = React.memo(function VantiMap() {
 
       {/* Primary UI Layer */}
       <div className="absolute inset-0 pointer-events-none z-20 flex flex-col p-3 md:p-6 pb-24 md:pb-6">
-        {/* Top: Branding & Search */}
-        <div className="w-full flex flex-col gap-3">
-          <div className="flex items-center justify-between w-full">
-            <div className="bg-[#0f1117]/95 backdrop-blur-3xl border border-white/10 h-11 px-4 rounded-2xl flex items-center gap-3 shadow-2xl pointer-events-auto transition-all active:scale-95 group">
-               <Compass className="w-5 h-5 text-rose-500" />
-               <div className="flex flex-col items-start select-none">
-                  <span className="text-[10px] font-black uppercase text-white tracking-widest leading-none">VANTi OS</span>
-                  <span className="text-[8px] font-bold text-slate-500 uppercase tracking-widest leading-none mt-0.5">Seoul Hub</span>
-               </div>
+        {/* Top Floating Widgets */}
+        <div className="absolute top-8 left-8 flex flex-col gap-4">
+          <WeatherCenterOverlay lat={mapCenter.lat} lng={mapCenter.lng} />
+        </div>
+
+        {/* Top: Branding & Search removed, only search relative z-[100] */}
+        <div className="w-full flex flex-col gap-5">
+          <div className="w-full max-w-xl mx-auto pointer-events-auto relative z-[100] flex flex-col gap-4 mt-4 md:mt-2 px-4 md:px-0">
+             <div className="flex flex-col items-center gap-4">
+                <div className="bg-[#0f1117]/80 backdrop-blur-xl border border-white/10 p-1.5 rounded-full flex items-center gap-1 shadow-2xl">
+                   {[
+                     { id: 'all', label: 'All' },
+                     { id: 'restaurant', label: 'Eat' },
+                     { id: 'landmark', label: 'See' },
+                     { id: 'hotel', label: 'Stay' }
+                   ].map((cat) => (
+                     <button
+                       key={cat.id}
+                       onClick={() => {
+                         triggerHaptic('tap');
+                         if (cat.id === 'all') {
+                           setActiveMarkerFilters(['all']);
+                         } else {
+                           const current = activeMarkerFilters.filter(f => f !== 'all');
+                           const next = current.includes(cat.id)
+                             ? current.filter(f => f !== cat.id)
+                             : [...current, cat.id];
+                           setActiveMarkerFilters(next.length === 0 ? ['all'] : next);
+                         }
+                       }}
+                       className={cn(
+                         "px-4 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest transition-all",
+                         activeMarkerFilters.includes(cat.id) 
+                           ? "bg-rose-500 text-white shadow-[0_0_15px_rgba(244,63,94,0.4)]" 
+                           : "text-slate-500 hover:text-slate-300 hover:bg-white/5"
+                       )}
+                     >
+                       {cat.label}
+                     </button>
+                   ))}
+                </div>
+
+                {/* Travel Mood Pills */}
+                <div className="flex items-center gap-1.5">
+                  {[
+                    { id: 'normal', label: 'Default', icon: <Compass className="w-3 h-3" /> },
+                    { id: 'adventure', label: 'Adventure', icon: <Navigation className="w-3 h-3" /> },
+                    { id: 'relaxation', label: 'Relax', icon: <Coffee className="w-3 h-3" /> },
+                    { id: 'culinary', label: 'Foodie', icon: <Utensils className="w-3 h-3" /> }
+                  ].map((mood) => (
+                    <button
+                      key={mood.id}
+                      onClick={() => {
+                        setTravelMood(mood.id as any);
+                        triggerHaptic('switch');
+                        addToast(`Mood: ${mood.label}`, 'info');
+                      }}
+                      className={cn(
+                        "flex items-center gap-2 px-3 py-1.5 rounded-full transition-all border",
+                        travelMood === mood.id 
+                          ? "bg-indigo-500 border-indigo-400 text-white shadow-lg shadow-indigo-500/20" 
+                          : "bg-[#0f1117]/60 backdrop-blur-md border-white/10 text-slate-400 hover:text-slate-200"
+                      )}
+                    >
+                      <span className={cn(travelMood === mood.id ? "text-white" : "text-slate-500")}>{mood.icon}</span>
+                      <span className="text-[8px] font-black uppercase tracking-widest">{mood.label}</span>
+                    </button>
+                  ))}
+                </div>
+             </div>
+             
+             <div id="vanti-search-nav"><PlacesAutocompleteInput onPlaceSelect={handlePlaceClick} /></div>
+          </div>
+        </div>
+
+        {/* Bottom Navigation Bar (App-Optimized Consolidated GNB) */}
+        <div className="absolute inset-x-0 bottom-0 p-4 md:p-6 flex flex-col items-center gap-4 pointer-events-none z-50">
+          
+          <div className="w-full flex justify-between items-end gap-3 pointer-events-none mb-1">
+            {/* Left side info (Speedometer) */}
+            <div className="flex-1 pointer-events-none">
             </div>
 
-            <div className="flex items-center gap-2 pointer-events-auto">
+            {/* Right side floating map controls (Functional Clustering) */}
+            <div className="flex flex-col gap-3 pointer-events-auto items-end relative">
+              {/* Quick Creation Menu (Bookmark/Marker) */}
               <AnimatePresence>
-                {showWeatherOverlay && (
-                  <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }} className="relative group/weather">
-                    <WeatherCenterOverlay lat={debouncedCenter.lat} lng={debouncedCenter.lng} />
-                    <button onClick={() => setShowWeatherOverlay(false)} className="absolute -top-1 -right-1 w-4 h-4 bg-slate-800 border border-white/10 rounded-full flex items-center justify-center text-slate-400 opacity-0 group-hover/weather:opacity-100 transition-opacity">
-                      <X className="w-2.5 h-2.5" />
+                {isCreateMenuOpen && (
+                  <motion.div 
+                    initial={{ opacity: 0, y: 10, scale: 0.9 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 10, scale: 0.9 }}
+                    className="flex flex-col gap-2.5 mb-2"
+                  >
+                    <button 
+                      onClick={() => {
+                        triggerHaptic('impact');
+                        let latVal = 37.5665;
+                        let lngVal = 126.9780;
+                        if (is3DActive && map3dRef.current) {
+                           const cen = (map3dRef.current as any).center;
+                           if (cen) { latVal = cen.lat; lngVal = cen.lng; }
+                        } else if (map) {
+                           const cen = map.getCenter();
+                           if (cen) { latVal = cen.lat(); lngVal = cen.lng(); }
+                        } else if (userLocation) {
+                           latVal = userLocation.lat;
+                           lngVal = userLocation.lng;
+                        }
+                        setBookmarkingLat(latVal);
+                        setBookmarkingLng(lngVal);
+                        setBookmarkingName(`Custom Spot (${latVal.toFixed(4)}, ${lngVal.toFixed(4)})`);
+                        setIsCreateMenuOpen(false);
+                        addToast("Spot ready to bookmark", "info");
+                      }}
+                      className="w-12 h-12 rounded-2xl flex items-center justify-center transition-all bg-[#0f1117]/90 backdrop-blur-3xl border border-amber-500/20 shadow-2xl text-amber-500 hover:bg-amber-500/10"
+                      title="Bookmark Coordinates"
+                    >
+                       <Bookmark className="w-5 h-5" />
+                    </button>
+
+                    <button 
+                      onClick={() => {
+                        triggerHaptic('impact');
+                        if (map) {
+                           const center = map.getCenter();
+                           if (center) {
+                             setAddingMarkerLat(center.lat());
+                             setAddingMarkerLng(center.lng());
+                           }
+                        } else if (userLocation) {
+                           setAddingMarkerLat(userLocation.lat);
+                           setAddingMarkerLng(userLocation.lng);
+                        }
+                        setIsCreateMenuOpen(false);
+                      }}
+                      className="w-12 h-12 rounded-2xl flex items-center justify-center transition-all bg-[#0f1117]/90 backdrop-blur-3xl border border-white/10 shadow-2xl text-slate-400 hover:text-white"
+                      title="Add Custom Pin"
+                    >
+                       <MapPin className="w-5 h-5" />
                     </button>
                   </motion.div>
                 )}
               </AnimatePresence>
-              <button onClick={() => setShowSettingsModal(true)} className="w-11 h-11 bg-[#0f1117]/95 backdrop-blur-2xl border border-white/10 rounded-2xl flex items-center justify-center text-slate-400 hover:text-white transition-all shadow-xl active:scale-95">
-                <Settings className="w-5 h-5" />
+
+              <button 
+                onClick={() => {
+                  setIsCreateMenuOpen(!isCreateMenuOpen);
+                  triggerHaptic('tap');
+                  setShowLayersMenu(false);
+                }}
+                className={cn(
+                  "w-12 h-12 rounded-2xl flex items-center justify-center transition-all shadow-2xl relative border",
+                  isCreateMenuOpen ? "bg-amber-500 text-white border-amber-400" : "bg-[#0f1117]/95 backdrop-blur-3xl border-white/10 text-slate-400 hover:text-white"
+                )}
+              >
+                <Plus className={cn("w-6 h-6 transition-transform", isCreateMenuOpen && "rotate-45")} />
               </button>
-            </div>
-          </div>
 
-          <div className="w-full max-w-xl mx-auto pointer-events-auto relative">
-            <div className="relative group/search">
-               <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 group-focus-within:text-rose-500 transition-colors" />
-               <input 
-                 type="text"
-                 value={queryText}
-                 onChange={(e) => handleInputChange(e.target.value)}
-                 onFocus={() => setShowSuggestions(true)}
-                 placeholder="Search destination..."
-                 className="w-full h-12 bg-[#0f1117]/95 backdrop-blur-3xl border border-white/10 rounded-2xl pl-12 pr-4 text-sm text-white focus:outline-none focus:ring-2 focus:ring-rose-500/30 transition-all shadow-2xl"
-               />
-            </div>
-            {/* Suggestions logic remains same, just better styled overlay */}
-            <AnimatePresence>
-               {showSuggestions && (suggestions.length > 0 || !queryText.trim()) && (
-                  <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="absolute top-14 left-0 right-0 bg-[#0f1117]/98 backdrop-blur-3xl border border-white/10 rounded-2xl overflow-hidden shadow-2xl z-[100]">
-                    <div className="max-h-[300px] overflow-y-auto py-2">
-                      <AnimatePresence mode="popLayout">
-                        {suggestions.map((suggestion, idx) => (
-                          <motion.button 
-                            key={`suggestion-${idx}`} 
-                            initial={{ opacity: 0, x: -10 }}
-                            animate={{ opacity: 1, x: 0 }}
-                            exit={{ opacity: 0, x: 10 }}
-                            transition={{ delay: idx * 0.03, duration: 0.2 }}
-                            onClick={() => handleSuggestionSelect(suggestion)} 
-                            className="w-full px-4 py-3 flex items-start gap-3 hover:bg-white/5 transition-colors group text-left border-b border-white/[0.03] last:border-0"
-                          >
-                             <MapPin className="w-4 h-4 text-slate-400 group-hover:text-rose-400 mt-1" />
-                             <div className="min-w-0 flex-1">
-                                <p className="text-[11px] font-bold text-slate-200 group-hover:text-white truncate">{suggestion.placePrediction?.text.text}</p>
-                                <p className="text-[9px] text-slate-500 truncate mt-0.5">{suggestion.placePrediction?.text.text.split(',').slice(1).join(',').trim()}</p>
-                             </div>
-                          </motion.button>
-                        ))}
-                      </AnimatePresence>
-                    </div>
-                  </motion.div>
-               )}
-            </AnimatePresence>
-          </div>
-        </div>
-
-        {/* Bottom Navigation Bar (Consolidated for Mobile Optimization) */}
-        <div className="absolute inset-x-0 bottom-0 p-4 md:p-6 flex flex-col items-center gap-4 pointer-events-none mb-1">
-          
-          <div className="w-full flex justify-between items-end gap-3 pointer-events-none">
-            {/* Left side info (Speedometer) */}
-            <div className="flex-1 pointer-events-none">
-              {showSpeedometer && (
+              {showLayersMenu && (
                 <motion.div 
-                  initial={{ opacity: 0, x: -20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  className="bg-[#0f1117]/95 backdrop-blur-3xl border border-white/10 p-3 rounded-2xl flex flex-col items-center justify-center shadow-2xl pointer-events-auto min-w-[70px] relative group/speed"
+                  initial={{ opacity: 0, scale: 0.9, x: 20 }}
+                  animate={{ opacity: 1, scale: 1, x: 0 }}
+                  exit={{ opacity: 0, scale: 0.9, x: 20 }}
+                  className="absolute right-full mr-4 bottom-[calc(48px+12px)] bg-[#0f1117]/95 backdrop-blur-3xl border border-white/10 p-3 rounded-2xl shadow-2xl origin-bottom-right w-56 flex flex-col gap-1 z-50 pointer-events-auto"
                 >
-                  <span className="text-2xl font-black text-white leading-none tracking-tighter">42</span>
-                  <span className="text-[8px] text-slate-500 font-bold uppercase tracking-widest mt-1">KM/H</span>
-                  <button onClick={() => setShowSpeedometer(false)} className="absolute -top-1 -right-1 w-4 h-4 bg-slate-800 border border-white/10 rounded-full flex items-center justify-center text-slate-400 opacity-0 group-hover/speed:opacity-100 transition-opacity"><X className="w-2.5 h-2.5" /></button>
+                  <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2 px-2">Map Overlays</div>
+                  
+                  <button onClick={() => { setShowTravelInsights(true); setShowLayersMenu(false); }} className="flex items-center gap-3 w-full p-2.5 rounded-xl transition-all text-left hover:bg-indigo-500/10 text-slate-300">
+                    <History className="w-4 h-4 text-indigo-400" />
+                    <span className="text-xs font-semibold">Travel Insights</span>
+                  </button>
+
+                  <div className="h-px bg-white/5 my-1 mx-2" />
+                  <button onClick={() => { setShowTrendingPins(!showTrendingPins); triggerHaptic('switch'); addToast(showTrendingPins ? "Trending spots hidden" : "Trending spots visible", "info"); }} className={cn("flex items-center gap-3 w-full p-2.5 rounded-xl transition-all text-left", showTrendingPins ? "bg-rose-500/10 text-rose-400" : "hover:bg-white/5 text-slate-300")}>
+                    <Flame className={cn("w-4 h-4", showTrendingPins && "animate-pulse")} />
+                    <span className="text-xs font-semibold">Trending Spots</span>
+                  </button>
+                  <button onClick={() => { setShowWeatherOverlay(!showWeatherOverlay); triggerHaptic('switch'); addToast(showWeatherOverlay ? "Atmospherics disabled" : "Atmospherics active", "info"); }} className={cn("flex items-center gap-3 w-full p-2.5 rounded-xl transition-all text-left", showWeatherOverlay ? "bg-sky-500/10 text-sky-400" : "hover:bg-white/5 text-slate-300")}>
+                    <Cloud className="w-4 h-4" />
+                    <span className="text-xs font-semibold">Weather Overlay</span>
+                  </button>
+                  <button onClick={() => { setShowWeatherLayer(!showWeatherLayer); triggerHaptic('switch'); addToast(showWeatherLayer ? "Radar beam offline" : "Satellite tracking online", "success"); }} className={cn("flex items-center gap-3 w-full p-2.5 rounded-xl transition-all text-left", showWeatherLayer ? "bg-cyan-500/10 text-cyan-400" : "hover:bg-white/5 text-slate-300")}>
+                    <CloudRain className="w-4 h-4" />
+                    <span className="text-xs font-semibold">Live Radar</span>
+                  </button>
+                  <button onClick={() => { setIsDiscoverMode(!isDiscoverMode); triggerHaptic('switch'); setShowLayersMenu(false); }} className={cn("flex items-center gap-3 w-full p-2.5 rounded-xl transition-all text-left", isDiscoverMode ? "bg-amber-500/10 text-amber-400" : "hover:bg-white/5 text-slate-300")}>
+                    <RadarIcon className={cn("w-4 h-4", isDiscoverMode && "animate-spin")} />
+                    <span className="text-xs font-semibold">Discovery Radar</span>
+                  </button>
+                  <button onClick={() => { setShowTrafficLayer(!showTrafficLayer); triggerHaptic('switch'); addToast(showTrafficLayer ? "Hiding traffic flow" : "Live traffic synchronized", "info"); }} className={cn("flex items-center gap-3 w-full p-2.5 rounded-xl transition-all text-left", showTrafficLayer ? "bg-emerald-500/10 text-emerald-400" : "hover:bg-white/5 text-slate-300")}>
+                    <Layers className="w-4 h-4" />
+                    <span className="text-xs font-semibold">Live Traffic</span>
+                  </button>
+                  <button onClick={() => { setShowSmartPlanner(true); triggerHaptic('impact'); }} className="flex items-center gap-3 w-full p-2.5 rounded-xl hover:bg-white/5 text-slate-300 transition-all text-left">
+                    <Sparkles className="w-4 h-4 text-indigo-400" />
+                    <span className="text-xs font-semibold">Smart Planner</span>
+                  </button>
+                  <button onClick={() => { setShowActivityLayer(!showActivityLayer); triggerHaptic('switch'); addToast(showActivityLayer ? "Activity stream offline" : "Nearby activity live", "success"); }} className={cn("flex items-center gap-3 w-full p-2.5 rounded-xl transition-all text-left", showActivityLayer ? "bg-amber-500/10 text-amber-400" : "hover:bg-white/5 text-slate-300")}>
+                    <Sparkles className="w-4 h-4" />
+                    <span className="text-xs font-semibold">Activity Stream</span>
+                  </button>
+
+                  <div className="w-full h-px bg-white/10 my-2" />
+                  <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2 px-2">Map Legend</div>
+                  
+                  {[{ 
+                      show: showPinsLayer && selectedCategory !== 'All',
+                      icon: <MapPin className="w-3.5 h-3.5 text-rose-400" />,
+                      label: `${selectedCategory} Nodes`
+                    },
+                    { 
+                      show: true,
+                      icon: <Sparkles className="w-3.5 h-3.5 text-amber-400" />,
+                      label: 'AI Insights'
+                    },
+                    { 
+                      show: true,
+                      icon: <Users className="w-3.5 h-3.5 text-indigo-400" />,
+                      label: 'Network Nodes'
+                    },
+                    { 
+                      show: itinerary && itinerary.length > 0,
+                      icon: <div className="w-4 h-0.5 bg-rose-500 rounded-full" />,
+                      label: 'Active Trajectory'
+                    },
+                    { 
+                      show: showTrafficLayer,
+                      icon: <div className="flex gap-0.5 items-center"><div className="w-2 h-0.5 bg-emerald-500 rounded-full" /><div className="w-1 h-0.5 bg-rose-500 rounded-full" /></div>,
+                      label: 'Traffic Flow'
+                    },
+                    { 
+                      show: showWeatherLayer || activeWeather !== null,
+                      icon: <Cloud className="w-3.5 h-3.5 text-sky-400" />,
+                      label: activeWeather || 'Atmosphere'
+                    }
+                  ].filter(item => item.show).map((item, idx) => (
+                    <div key={idx} className="flex items-center gap-3 w-full px-2.5 py-1.5 opacity-80">
+                      <div className="w-4 flex items-center justify-center shrink-0">
+                        {item.icon}
+                      </div>
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-tight">{item.label}</span>
+                    </div>
+                  ))}
+
+                  <div className="w-full h-px bg-white/10 my-2" />
+                  <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2 px-2">View Modes</div>
+
+                  <button onClick={() => { setIsAROpen(!isAROpen); triggerHaptic('mode3d'); setShowLayersMenu(false); }} className={cn("flex items-center gap-3 w-full p-2.5 rounded-xl transition-all text-left", isAROpen ? "bg-cyan-500/10 text-cyan-400" : "hover:bg-white/5 text-slate-300")}>
+                    <Camera className="w-4 h-4" />
+                    <span className="text-xs font-semibold">AR Camera</span>
+                  </button>
+                  <button onClick={() => { setPerspectiveLock(!perspectiveLock); triggerHaptic('switch'); }} className={cn("flex items-center gap-3 w-full p-2.5 rounded-xl transition-all text-left", perspectiveLock ? "bg-rose-500/10 text-rose-400" : "hover:bg-white/5 text-slate-300")}>
+                    <LocateFixed className="w-4 h-4" />
+                    <span className="text-xs font-semibold">Perspective Lock</span>
+                  </button>
+                  <button onClick={() => { setIs3DActive(!is3DActive); triggerHaptic('switch'); }} className={cn("flex items-center gap-3 w-full p-2.5 rounded-xl transition-all text-left", is3DActive ? "bg-indigo-500/10 text-indigo-400" : "hover:bg-white/5 text-slate-300")}>
+                    <Box className="w-4 h-4" />
+                    <span className="text-xs font-semibold">3D Mode</span>
+                  </button>
+                  <button onClick={() => { 
+                      const newTilt = mapTilt === 0 ? 65 : 0;
+                      if (is3DActive && map3dRef.current) {
+                        (map3dRef.current as any).tilt = newTilt;
+                      } else if (map) {
+                        map.moveCamera({ tilt: newTilt });
+                      }
+                      setMapTilt(newTilt);
+                      triggerHaptic('switch');
+                    }} 
+                    className={cn("flex items-center gap-3 w-full p-2.5 rounded-xl transition-all text-left", mapTilt > 0 ? "bg-amber-500/10 text-amber-400" : "hover:bg-white/5 text-slate-300")}>
+                    <LayoutGrid className="w-4 h-4" style={{ transform: mapTilt > 0 ? 'rotateX(45deg)' : 'none' }} />
+                    <span className="text-xs font-semibold">Map Tilt</span>
+                  </button>
                 </motion.div>
               )}
-            </div>
 
-            {/* Right side floating map controls (Zoom/Recenter) */}
-            <div className="flex flex-col gap-2.5 pointer-events-auto">
-              {/* Interactive Layer Switches */}
-              <div className="flex flex-col bg-[#0f1117]/95 backdrop-blur-3xl border border-white/10 p-1 rounded-2xl shadow-2xl scale-95 origin-right">
-                  <button 
-                    onClick={() => {
-                      setShowTrendingPins(!showTrendingPins);
-                      triggerHaptic('switch');
-                    }} 
-                    className={cn(
-                      "p-3 rounded-xl transition-all relative group", 
-                      showTrendingPins ? "text-rose-500 bg-rose-500/10" : "text-slate-500 hover:text-white"
-                    )}
-                    title="Toggle Trending Pins"
-                  >
-                    <Flame className="w-5 h-5 animate-pulse" />
-                    <span className="absolute right-full mr-2 px-2 py-1 bg-slate-950/90 text-[7px] font-bold text-white uppercase rounded border border-white/10 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">Trending Spots</span>
-                  </button>
-                  <div className="w-1/2 h-px bg-white/5 mx-auto" />
-                  <button 
-                    onClick={() => {
-                      setShowWeatherOverlay(!showWeatherOverlay);
-                      triggerHaptic('switch');
-                    }} 
-                    className={cn(
-                      "p-3 rounded-xl transition-all relative group", 
-                      showWeatherOverlay ? "text-sky-400 bg-sky-500/10" : "text-slate-500 hover:text-white"
-                    )}
-                    title="Toggle Weather Overlay"
-                  >
-                    <Cloud className="w-5 h-5" />
-                    <span className="absolute right-full mr-2 px-2 py-1 bg-slate-950/90 text-[7px] font-bold text-white uppercase rounded border border-white/10 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">Weather Atmospheric Overlay</span>
-                  </button>
-                  <div className="w-1/2 h-px bg-white/5 mx-auto" />
-                  <button 
-                    onClick={() => {
-                      setShowTrafficLayer(!showTrafficLayer);
-                      triggerHaptic('switch');
-                    }} 
-                    className={cn(
-                      "p-3 rounded-xl transition-all relative group", 
-                      showTrafficLayer ? "text-emerald-400 bg-emerald-500/10" : "text-slate-500 hover:text-white"
-                    )}
-                    title="Toggle Traffic Layer"
-                  >
-                    <Layers className="w-5 h-5" />
-                    <span className="absolute right-full mr-2 px-2 py-1 bg-slate-950/90 text-[7px] font-bold text-white uppercase rounded border border-white/10 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">Live Traffic</span>
-                  </button>
-              </div>
+              <button 
+                id="vanti-layers-nav"
+                onClick={() => {
+                  setShowLayersMenu(!showLayersMenu);
+                  triggerHaptic('tap');
+                  setIsCreateMenuOpen(false);
+                }} 
+                className={cn("w-12 h-12 rounded-2xl flex items-center justify-center transition-all shadow-2xl relative", showLayersMenu ? "bg-indigo-500 hover:bg-indigo-600 text-white border-indigo-400" : "bg-[#0f1117]/95 backdrop-blur-3xl border border-white/10 text-slate-400 hover:text-white")}
+              >
+                 <Layers className={cn("w-5 h-5", showLayersMenu && "animate-pulse")} />
+              </button>
 
-              <div className="flex flex-col bg-[#0f1117]/95 backdrop-blur-3xl border border-white/10 p-1 rounded-2xl shadow-2xl">
-                 <button onClick={() => setMapZoom(z => Math.min(z + 1, 21))} className="p-3 text-slate-400 hover:text-white transition-all active:bg-white/5 rounded-xl"><Plus className="w-5 h-5" /></button>
-                 <div className="w-1/2 h-px bg-white/5 mx-auto" />
-                 <button onClick={() => setMapZoom(z => Math.max(z - 1, 1))} className="p-3 text-slate-400 hover:text-white transition-all active:bg-white/5 rounded-xl"><Minus className="w-5 h-5" /></button>
-              </div>
-
-              <div className="flex flex-col bg-[#0f1117]/95 backdrop-blur-3xl border border-white/10 p-1 rounded-2xl shadow-2xl">
-                 <button 
-                  onClick={() => {
-                    setIsAROpen(!isAROpen);
-                    triggerHaptic('mode3d');
-                  }} 
-                  className={cn(
-                    "p-3 rounded-xl transition-all", 
-                    isAROpen ? "bg-cyan-500 text-white shadow-lg shadow-cyan-500/30" : "text-slate-400 hover:text-white"
-                  )}
-                  title="AR Camera Mode"
-                >
-                  <Camera className="w-5 h-5" />
-                </button>
-                 <div className="w-1/2 h-px bg-white/5 mx-auto" />
-                 <button onClick={() => setPerspectiveLock(!perspectiveLock)} className={cn("p-3 rounded-xl transition-all", perspectiveLock ? "bg-rose-500 text-white shadow-lg shadow-rose-500/30" : "text-slate-400 hover:text-white")}><LocateFixed className="w-5 h-5" /></button>
-                 <div className="w-1/2 h-px bg-white/5 mx-auto" />
-                 <button onClick={() => setIs3DActive(!is3DActive)} className={cn("p-3 rounded-xl transition-all", is3DActive ? "text-rose-400 bg-rose-500/10" : "text-slate-400 hover:text-white")}><Box className="w-5 h-5" /></button>
-              </div>
-              
-              <button onClick={() => { triggerRecenter(); triggerHaptic('impact'); }} className="w-12 h-12 bg-rose-500 hover:bg-rose-600 rounded-2xl flex items-center justify-center text-white shadow-lg shadow-rose-500/30 active:scale-95 transition-all">
+              <button onClick={() => { triggerRecenter(); triggerHaptic('impact'); setIsCreateMenuOpen(false); setShowLayersMenu(false); }} className="w-12 h-12 bg-rose-500 hover:bg-rose-600 rounded-2xl flex items-center justify-center text-white shadow-lg shadow-rose-500/30 active:scale-95 transition-all">
                  <Crosshair className="w-6 h-6" />
               </button>
             </div>
           </div>
 
-          {/* Main Action Bar */}
-          <div className="w-full max-w-lg bg-[#0f1117]/90 backdrop-blur-3xl border border-white/10 p-2 rounded-[2rem] shadow-2xl flex items-center gap-1.5 pointer-events-auto ring-1 ring-white/5">
+          {/* Main Action Bar (GNB Cluster Optimization) */}
+          <div className="w-full max-w-lg bg-[#0f1117]/95 backdrop-blur-3xl border border-white/10 p-2 rounded-[2rem] shadow-[0_20px_50px_rgba(0,0,0,0.5)] flex items-center justify-between pointer-events-auto ring-1 ring-white/5 relative">
             {[
               { id: 'explore', label: 'Explore', icon: Compass },
               { id: 'route', label: 'Route', icon: Navigation },
-              { id: 'profile', label: 'Nodes', icon: Layers },
-              { id: 'config', label: 'Ops', icon: Settings },
-            ].map(tab => {
+              { id: 'ai', label: 'Ask AI', icon: Sparkles },
+              { id: 'nodes', label: 'Society', icon: Users },
+              { id: 'settings', label: 'Settings', icon: Settings },
+            ].map((tab, idx) => {
               const Icon = tab.icon;
               const active = (tab.id === 'route' && showRoutePlanner) || 
-                             (tab.id === 'config' && showControls) ||
-                             (tab.id === 'explore' && activeMode === 'all' && !showRoutePlanner && !showControls) ||
-                             (tab.id === 'profile' && activeMode === 'profile');
+                             (tab.id === 'ai' && isChatbotOpen) ||
+                             (tab.id === 'explore' && activeMode === 'all' && !showRoutePlanner && !isChatbotOpen && !isDiscoverMode) ||
+                             (tab.id === 'nodes' && activeMode === 'profile');
               
               return (
                 <button
                   key={tab.id}
+                  id={`vanti-${tab.id}-nav`}
                   onClick={() => {
                     triggerHaptic('switch');
                     if (tab.id === 'route') {
-                      setShowRoutePlanner(!showRoutePlanner);
-                      setShowControls(false);
+                      setShowRoutePlanner(true);
+                      setIsChatbotOpen(false);
+                      setIsDiscoverMode(false);
                       if (activeMode === 'profile') setActiveMode('all');
-                    } else if (tab.id === 'config') {
-                      setShowControls(!showControls);
+                    } else if (tab.id === 'ai') {
+                      setIsChatbotOpen(true);
                       setShowRoutePlanner(false);
-                    } else if (tab.id === 'profile') {
+                      setIsDiscoverMode(false);
+                    } else if (tab.id === 'nodes') {
                       setActiveMode('profile');
                       setShowRoutePlanner(false);
-                      setShowControls(false);
+                      setIsChatbotOpen(false);
+                      setIsDiscoverMode(false);
+                    } else if (tab.id === 'settings') {
+                      setShowSettingsModal(true);
                     } else {
                       setActiveMode('all');
                       setShowRoutePlanner(false);
-                      setShowControls(false);
+                      setIsChatbotOpen(false);
+                      setIsDiscoverMode(false);
                     }
                   }}
                   className={cn(
-                    "flex-1 flex flex-col items-center justify-center py-2.5 rounded-2xl transition-all relative group",
-                    active ? "text-rose-500" : "text-slate-500 hover:text-slate-300"
+                    "flex-1 flex flex-col items-center justify-center py-2 transition-all relative group",
+                    tab.id === 'ai' ? "rounded-full aspect-square max-w-[54px] -mt-8 bg-gradient-to-br from-indigo-500 to-purple-600 shadow-xl border border-indigo-400 text-white" : "rounded-2xl",
+                    tab.id !== 'ai' && (active && tab.id !== 'settings' ? "text-rose-500" : "text-slate-500 hover:text-slate-300"),
+                    tab.id === 'ai' && active && "shadow-[0_0_25px_rgba(99,102,241,0.7)]"
                   )}
                 >
-                  {active && <motion.div layoutId="nav-active" className="absolute inset-0 bg-white/5 rounded-2xl border border-white/5" />}
-                  <Icon className={cn("w-5 h-5 mb-1 z-10 transition-transform", active && "scale-110")} />
-                  <span className="text-[8px] font-black uppercase tracking-[0.2em] z-10 leading-none">{tab.label}</span>
+                  {active && tab.id !== 'ai' && tab.id !== 'settings' && <motion.div layoutId="nav-active" className="absolute inset-0 bg-white/5 rounded-2xl border border-white/10" />}
+                  <Icon className={cn("w-5 h-5 mb-1 z-10 transition-transform", active && tab.id !== 'settings' && "scale-110", tab.id === 'ai' && "mb-0 w-6 h-6 animate-pulse")} />
+                  {tab.id !== 'ai' && <span className="text-[7px] font-black uppercase tracking-[0.25em] z-10 leading-none">{tab.label}</span>}
                 </button>
               );
             })}
@@ -3699,6 +4600,9 @@ const VantiMap = React.memo(function VantiMap() {
                       {style === 'Neo-Tokyo' && <Navigation className="w-6 h-6" />}
                       {style === 'Midnight' && <EyeOff className="w-6 h-6" />}
                       {style === 'Sketch' && <MapPin className="w-6 h-6" />}
+                      {style === 'Minimalist' && <LayoutGrid className="w-6 h-6" />}
+                      {style === 'Terrain-Focused' && <Mountain className="w-6 h-6" />}
+                      {style === 'High-Contrast' && <Activity className="w-6 h-6" />}
                     </div>
                     <span className="text-[10px] font-black uppercase tracking-widest">{style}</span>
                     {mapTheme === style && <motion.div layoutId="active-style" className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1.5 h-1.5 bg-rose-500 rounded-full" />}
@@ -3843,20 +4747,297 @@ const VantiMap = React.memo(function VantiMap() {
       </AnimatePresence>
       
       {/* Multimodal Gemini Smart chatbot companion */}
-      <Chatbot onMapCommand={handleMapCommand} isVisible={!showList} />
+      <Chatbot onMapCommand={handleMapCommand} isVisible={!showList && !isCinematicMode} />
+      <QuickPhrasesOverlay />
+
+      {/* Sophisticated Map Tile Compiling / Loading HUD overlay */}
+      <AnimatePresence>
+        {isMapTilesLoading && (
+          <div className="absolute top-[88px] md:top-24 left-1/2 -translate-x-1/2 z-[100] pointer-events-none">
+            <motion.div 
+              initial={{ opacity: 0, y: -15, scale: 0.95 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -15, scale: 0.95 }}
+              className="flex flex-col items-center gap-1.5 px-4 py-2.5 min-w-[280px] bg-[#0c0e12]/95 backdrop-blur-md rounded-2xl border border-rose-500/20 shadow-[0_8px_32px_rgba(244,63,94,0.15)] overflow-hidden"
+            >
+              {/* Top glow sweep indicator */}
+              <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-rose-400 to-transparent shadow-[0_0_8px_#f43f5e]" />
+              
+              {/* Scanning neon grid simulation line */}
+              <motion.div
+                className="absolute inset-x-0 h-[20px] bg-gradient-to-b from-rose-500/0 via-rose-500/5 to-rose-500/0"
+                animate={{
+                  y: [-20, 60]
+                }}
+                transition={{
+                  repeat: Infinity,
+                  duration: 2.2,
+                  ease: "linear"
+                }}
+              />
+
+              {/* Title & Status Beacon */}
+              <div className="flex items-center gap-2">
+                <div className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse shrink-0" />
+                <span className="text-[9px] font-black uppercase tracking-widest text-slate-300 font-mono">
+                  VANTi VECTOR // COMPILING
+                </span>
+              </div>
+
+              {/* Progress Track */}
+              <div className="w-full h-1 bg-slate-950/80 rounded-full overflow-hidden relative">
+                <motion.div 
+                  className="absolute inset-y-0 bg-rose-500 rounded-full"
+                  animate={{ 
+                    x: ['-100%', '100%'] 
+                  }}
+                  transition={{ 
+                    repeat: Infinity, 
+                    duration: 1.4, 
+                    ease: "easeInOut" 
+                  }}
+                  style={{ width: '45%' }}
+                />
+              </div>
+
+              {/* Details Metrics bar */}
+              <div className="flex justify-between items-center w-full px-0.5">
+                <span className="text-[7.5px] font-mono font-bold text-slate-500 uppercase tracking-tighter">
+                  SECTOR RECENTERED
+                </span>
+                <span className="text-[7.5px] font-mono font-bold text-rose-400 uppercase tracking-tighter">
+                  INDEXING TILESETS
+                </span>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Add Marker Mini Modal */}
+      <AnimatePresence>
+        {addingMarkerLat !== null && addingMarkerLng !== null && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }} 
+              animate={{ opacity: 1 }} 
+              exit={{ opacity: 0 }} 
+              onClick={() => {
+                setAddingMarkerLat(null);
+                setAddingMarkerLng(null);
+              }}
+              className="absolute inset-0 bg-slate-950/60 backdrop-blur-sm" 
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="relative w-full max-w-sm bg-slate-900 border border-slate-700/50 rounded-3xl shadow-2xl overflow-hidden"
+            >
+              <div className="p-5 flex flex-col gap-4">
+                <div className="flex items-center gap-3 text-indigo-400">
+                  <div className="w-10 h-10 rounded-full bg-indigo-500/20 flex items-center justify-center border border-indigo-500/30">
+                    <MapPin className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-white leading-tight">Drop Custom Pin</h3>
+                    <p className="text-xs text-slate-400">Label this exact coordinate</p>
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <input
+                    type="text"
+                    placeholder="Nickname (e.g. Hidden Cafe)"
+                    value={addingMarkerNick}
+                    onChange={(e) => setAddingMarkerNick(e.target.value)}
+                    autoFocus
+                    className="w-full bg-slate-950/50 border border-white/5 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 placeholder:text-slate-600"
+                  />
+                  <select
+                    value={addingMarkerCategory}
+                    onChange={(e) => setAddingMarkerCategory(e.target.value)}
+                    className="w-full bg-slate-950/50 border border-white/5 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
+                  >
+                    <option value="Restaurant">Restaurant</option>
+                    <option value="Scenic">Scenic</option>
+                    <option value="Hotel">Hotel</option>
+                    <option value="Event">Event</option>
+                    <option value="Hidden Gem">Hidden Gem</option>
+                    <option value="Other">Other</option>
+                  </select>
+                  <textarea
+                    placeholder="Short Note (Optional)"
+                    value={addingMarkerNote}
+                    onChange={(e) => setAddingMarkerNote(e.target.value)}
+                    rows={2}
+                    className="w-full bg-slate-950/50 border border-white/5 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 placeholder:text-slate-600 resize-none"
+                  />
+                </div>
+
+                <div className="flex gap-2 mt-2">
+                  <button
+                    onClick={() => {
+                      setAddingMarkerLat(null);
+                      setAddingMarkerLng(null);
+                      setAddingMarkerNick('');
+                      setAddingMarkerNote('');
+                      setAddingMarkerCategory('Restaurant');
+                    }}
+                    className="flex-1 px-4 py-3 rounded-xl bg-white/5 hover:bg-white/10 text-white font-medium text-sm transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (!addingMarkerNick.trim()) return;
+                      addCustomMarker({
+                        id: `cm-${Date.now()}`,
+                        lat: addingMarkerLat,
+                        lng: addingMarkerLng,
+                        nickname: addingMarkerNick.trim(),
+                        note: addingMarkerNote.trim(),
+                        category: addingMarkerCategory
+                      });
+                      setAddingMarkerLat(null);
+                      setAddingMarkerLng(null);
+                      setAddingMarkerNick('');
+                      setAddingMarkerNote('');
+                      setAddingMarkerCategory('Restaurant');
+                      triggerHaptic('success');
+                      setShowToast(true);
+                      setTimeout(() => setShowToast(false), 3000);
+                    }}
+                    disabled={!addingMarkerNick.trim()}
+                    className="flex-1 px-4 py-3 rounded-xl bg-indigo-500 hover:bg-indigo-600 text-white font-medium text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Save Pin
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Success Toast */}
+      <AnimatePresence>
+        {showToast && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 20 }}
+            className="fixed bottom-24 left-1/2 -translate-x-1/2 z-[250] bg-emerald-500/90 backdrop-blur-md text-white px-6 py-3 rounded-full flex items-center gap-3 shadow-2xl border border-emerald-400"
+          >
+            <CheckIcon className="w-5 h-5" />
+            <span className="font-medium text-sm">Location saved successfully</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Coordinate Bookmarking Modal */}
+      <AnimatePresence>
+        {bookmarkingLat !== null && bookmarkingLng !== null && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }} 
+              animate={{ opacity: 1 }} 
+              exit={{ opacity: 0 }} 
+              onClick={() => {
+                setBookmarkingLat(null);
+                setBookmarkingLng(null);
+              }}
+              className="absolute inset-0 bg-slate-950/60 backdrop-blur-sm" 
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="relative w-full max-w-sm bg-slate-900 border border-slate-700/50 rounded-3xl shadow-2xl overflow-hidden"
+            >
+              <div className="p-5 flex flex-col gap-4">
+                <div className="flex items-center gap-3 text-amber-400">
+                  <div className="w-10 h-10 rounded-full bg-amber-500/20 flex items-center justify-center border border-amber-500/30">
+                    <Bookmark className="w-5 h-5 text-amber-400" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-white leading-tight">Bookmark Current View</h3>
+                    <p className="text-xs text-slate-400">Save coordinate to cloud bookmarks</p>
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-mono font-bold text-slate-500 pl-1">Name</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. My Favorite Scenic Outlook"
+                      value={bookmarkingName}
+                      onChange={(e) => setBookmarkingName(e.target.value)}
+                      autoFocus
+                      className="w-full bg-slate-950/50 border border-white/5 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/50 placeholder:text-slate-600"
+                    />
+                  </div>
+                  
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-mono font-bold text-slate-500 pl-1">Category</label>
+                    <select
+                      value={bookmarkingCategory}
+                      onChange={(e) => setBookmarkingCategory(e.target.value)}
+                      className="w-full bg-slate-950/50 border border-white/5 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/50"
+                    >
+                      <option value="scenic">Scenic Lookout</option>
+                      <option value="restaurant">Restaurant / Bistro</option>
+                      <option value="hotel">Hotel / Lodging</option>
+                      <option value="destination">Key Destination</option>
+                      <option value="point_of_interest">Point of Interest</option>
+                      <option value="secret">Hidden Spot</option>
+                    </select>
+                  </div>
+
+                  <div className="p-3 bg-slate-950/40 rounded-xl border border-white/[0.02]">
+                    <div className="text-[8px] uppercase font-mono font-bold text-slate-500">Geospatial Coordinates</div>
+                    <div className="text-xs text-slate-300 font-mono mt-0.5">
+                      LAT: {bookmarkingLat.toFixed(6)} • LNG: {bookmarkingLng.toFixed(6)}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex gap-2 mt-2">
+                  <button
+                    onClick={() => {
+                      setBookmarkingLat(null);
+                      setBookmarkingLng(null);
+                    }}
+                    className="flex-1 px-4 py-3 rounded-xl bg-white/5 hover:bg-white/10 text-white font-medium text-sm transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={saveCoordinateBookmark}
+                    disabled={!bookmarkingName.trim() || isSavingBookmark}
+                    className="flex-1 px-4 py-3 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isSavingBookmark ? 'Saving...' : 'Save Cloud Bookmark'}
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
       
-
-
       <SoundEngine 
         theme={mapTheme} 
         selectedPlace={selectedPlace} 
         mapCenter={mapCenter} 
         mapHeading={mapHeading} 
+        nearbyHighlights={nearbyHighlights}
       />
 
       {/* Nearby Highlights Summary Card (appears when zoomed in, showList is false, and no place is selected) */}
       <AnimatePresence>
-        {mapZoom >= 15.5 && !showList && !selectedPlace && nearbyHighlights.length > 0 && (
+        {isDiscoverMode && !showList && !selectedPlace && nearbyHighlights.length > 0 && (
           <motion.div
             initial={{ opacity: 0, x: -50, scale: 0.95 }}
             animate={{ 
@@ -3915,7 +5096,7 @@ const VantiMap = React.memo(function VantiMap() {
               {loadingHighlights ? (
                 <div className="space-y-3 p-1">
                   {[1, 2, 3].map(i => (
-                    <div key={i} className="flex gap-3 p-3 rounded-2xl bg-white/5 border border-white/5">
+                    <div key={`skeleton-highlights-${i}`} className="flex gap-3 p-3 rounded-2xl bg-white/5 border border-white/5">
                       <Skeleton className="w-14 h-14 rounded-xl shrink-0" />
                       <div className="flex-1 space-y-2">
                         <SkeletonText className="w-2/3 h-3" />
@@ -4106,10 +5287,15 @@ const VantiMap = React.memo(function VantiMap() {
       </AnimatePresence>
 
       {/* Slidiable Left / Outer Overlay Panel containing search details or mode statistics (Z-index: 15) */}
+      {!isCinematicMode && <LiveSocialFeed />}
+
       <WeatherEffects 
         mapTheme={mapTheme}
         activeWeather={activeWeather}
+        weather={currentWeatherData}
       />
+
+      <CommunityActivityLayer isIdle={isMapIdle} />
 
       <AnimatePresence>
         {['Simulation', 'Genie', 'Cosmic', 'Neo-Tokyo'].includes(mapTheme) && (
@@ -4263,12 +5449,19 @@ const VantiMap = React.memo(function VantiMap() {
                 <div className="flex-1 overflow-y-auto p-4 scrollbar-thin scrollbar-thumb-slate-800 relative">
                   
                   {/* EXPLORE & DISCOVERY LAYER (Active for all, social, genius) */}
-                  <div className={cn(
-                    "space-y-5 transition-all duration-500",
-                    (activeMode === 'all' || activeMode === 'social' || activeMode === 'genius' || activeCollection) 
-                      ? "opacity-100 translate-y-0 pointer-events-auto" 
-                      : "opacity-0 translate-y-4 pointer-events-none absolute inset-x-4 top-4"
-                  )}>
+                  <motion.div 
+                    initial={false}
+                    animate={{ 
+                      opacity: (activeMode === 'all' || activeMode === 'social' || activeMode === 'genius' || activeCollection) ? 1 : 0, 
+                      y: (activeMode === 'all' || activeMode === 'social' || activeMode === 'genius' || activeCollection) ? 0 : 20,
+                      pointerEvents: (activeMode === 'all' || activeMode === 'social' || activeMode === 'genius' || activeCollection) ? 'auto' : 'none'
+                    }}
+                    transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+                    className={cn(
+                      "space-y-5",
+                      !(activeMode === 'all' || activeMode === 'social' || activeMode === 'genius' || activeCollection) && "absolute inset-x-4 top-4"
+                    )}
+                  >
                     {/* MODE CUSTOM INSIGHTS HEADER CARD */}
                     <div className="p-4 rounded-2xl bg-gradient-to-br from-slate-900 via-slate-950 to-slate-900 border border-slate-800/80 relative overflow-hidden shadow-xl">
                       <div className="absolute right-[-20px] top-[-20px] opacity-10">
@@ -4359,27 +5552,40 @@ const VantiMap = React.memo(function VantiMap() {
                           )}
 
                           {/* Search Results First (High Intent) */}
-                          {filteredPlaces.map((p, idx) => (
-                            <motion.div 
-                               initial={{ opacity: 0, y: 10 }}
-                               animate={{ opacity: 1, y: 0 }}
-                               transition={{ delay: idx * 0.04, duration: 0.3 }}
-                               key={`search-list-${p.id}`}
-                               onClick={() => {
-                                 triggerHaptic('open_panel');
-                                 handlePlaceClick(p);
-                               }}
-                               className="bg-slate-900/40 hover:bg-slate-800/60 border border-slate-800 rounded-2xl p-3 flex gap-3 cursor-pointer group transition-all"
-                            >
-                               <div className="w-10 h-10 rounded-xl bg-violet-600/10 border border-violet-500/20 flex items-center justify-center text-violet-400 shrink-0">
-                                 <Search className="w-5 h-5" />
-                               </div>
-                               <div className="flex-1 min-w-0">
+                          {isSearching ? (
+                            <div className="space-y-3 p-1">
+                              {[1, 2, 3].map(i => (
+                                <div key={`skeleton-search-${i}`} className="flex gap-3 p-3 rounded-2xl bg-white/5 border border-white/5">
+                                  <Skeleton className="w-10 h-10 rounded-xl shrink-0" />
+                                  <div className="flex-1 space-y-2">
+                                    <Skeleton className="w-2/3 h-4 rounded-full" />
+                                    <Skeleton className="w-1/2 h-3 rounded-full" />
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            filteredPlaces.map((p, idx) => (
+                              <motion.div 
+                                 initial={{ opacity: 0, y: 10 }}
+                                 animate={{ opacity: 1, y: 0 }}
+                                 transition={{ delay: idx * 0.04, duration: 0.3 }}
+                                 key={`search-list-${p.id}`}
+                                 onClick={() => {
+                                   triggerHaptic('open_panel');
+                                   handlePlaceClick(p);
+                                 }}
+                                 className="bg-slate-900/40 hover:bg-slate-800/60 border border-slate-800 rounded-2xl p-3 flex gap-3 cursor-pointer group transition-all"
+                              >
+                                 <div className="w-10 h-10 rounded-xl bg-violet-600/10 border border-violet-500/20 flex items-center justify-center text-violet-400 shrink-0">
+                                   <Search className="w-5 h-5" />
+                                 </div>
+                                 <div className="flex-1 min-w-0">
                                  <h6 className="text-[11px] font-black text-white uppercase tracking-tight truncate group-hover:text-rose-400 transition-colors">{p.displayName}</h6>
                                  <p className="text-[9px] text-slate-500 truncate mt-0.5">{p.formattedAddress}</p>
                                </div>
                             </motion.div>
-                          ))}
+                          )))}
 
                           {/* Mock Curation (Atmospheric) */}
                           {filteredMockPlaces.slice(0, 10).map((p, idx) => (
@@ -4412,23 +5618,33 @@ const VantiMap = React.memo(function VantiMap() {
                         </div>
                       )}
                     </div>
-                  </div>
+                  </motion.div>
 
                   {/* PROFILE / OS HUB LAYER */}
-                  <div className={cn(
-                    "space-y-6 transition-all duration-500",
-                    activeMode === 'profile' 
-                      ? "opacity-100 translate-y-0 pointer-events-auto" 
-                      : "opacity-0 translate-y-4 pointer-events-none absolute inset-x-4 top-4"
-                  )}>
+                  <motion.div 
+                    initial={false}
+                    animate={{ 
+                      opacity: activeMode === 'profile' ? 1 : 0, 
+                      y: activeMode === 'profile' ? 0 : 20,
+                      pointerEvents: activeMode === 'profile' ? 'auto' : 'none'
+                    }}
+                    transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+                    className={cn(
+                      "space-y-6",
+                      activeMode !== 'profile' && "absolute inset-x-4 top-4"
+                    )}
+                  >
                     <div className="space-y-6">
 
                       {/* OS Hub High-Fidelity Tab Selector Navigation */}
-                      <div className="flex bg-[#07090d]/90 p-1 rounded-2xl border border-slate-800 gap-1 backdrop-blur-md">
+                      <div className="flex bg-[#07090d]/90 p-1 rounded-2xl border border-slate-800 gap-1 backdrop-blur-md overflow-x-auto scrollbar-hide">
                         {[
                           { id: 'hub', label: 'Nodes & Core', icon: Layers },
+                          { id: 'summary', label: 'AI Log', icon: Sparkles },
                           { id: 'diary', label: 'Diary', icon: BookOpen },
                           { id: 'planner', label: 'Trip Planner', icon: Compass },
+                          { id: 'recommended', label: 'Recommended', icon: Sparkles },
+                          { id: 'events', label: 'Events', icon: Calendar },
                           { id: 'offline', label: 'Cache Control', icon: Download }
                         ].map(tab => {
                           const IconComp = tab.icon;
@@ -4455,504 +5671,351 @@ const VantiMap = React.memo(function VantiMap() {
                         })}
                       </div>
 
-                      {activeHubTab === 'hub' ? (
-                        <div className="space-y-6 animate-fadeIn">
-                          {/* CURATED COLLECTIONS - Moved to OS HUB Library */}
-                      <div className="space-y-3">
-                        <div className="flex items-center gap-2 px-1">
-                          <Layers className="w-4 h-4 text-rose-500" />
-                          <h5 className="text-[10px] uppercase font-black tracking-widest text-slate-400">Discovery Library</h5>
-                        </div>
-                        {CURATED_LISTS.map(list => (
-                          <div 
-                            key={list.id} 
-                            onClick={() => {
-                              triggerHaptic('tap');
-                              setActiveCollection(list.id);
-                              if (list.id === 'canada_working_holiday') {
-                                setActiveMode('canada');
-                                setMapCenter(CANADA_CENTER);
-                                setMapZoom(13.5);
-                              } else if (list.id === 'night_vision') {
-                                setMapTheme('Night');
-                                triggerFlyover(SEOUL_MOCK_PLACES[1]);
-                              } else {
-                                triggerFlyover(SEOUL_MOCK_PLACES[0]);
-                              }
-                              setShowList(true); // Open panel to show filtered spots
-                            }}
-                            className={cn(
-                              "p-4 rounded-2xl bg-[#111319]/80 border cursor-pointer group transition-all active:scale-95",
-                              activeCollection === list.id ? "border-rose-500/50 shadow-[0_0_20px_rgba(244,63,94,0.1)]" : "border-slate-800 hover:border-slate-700"
-                            )}
-                          >
-                            <div className="flex justify-between items-center">
-                              <div>
-                                <h6 className={cn(
-                                  "text-[11px] font-black uppercase tracking-tight transition-colors",
-                                  activeCollection === list.id ? "text-rose-400" : "text-white group-hover:text-rose-400"
-                                )}>{list.title}</h6>
-                                <p className="text-[9px] text-slate-500 mt-1 font-medium leading-relaxed">{list.description}</p>
-                              </div>
-                              <ChevronRight className={cn(
-                                "w-4 h-4 transition-all",
-                                activeCollection === list.id ? "text-rose-500" : "text-slate-700 group-hover:text-rose-500"
-                              )} />
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-
-                      {/* OS HUB: SAVED PLACES & VOUCHERS INTEGRATION */}
-                      <div className="grid grid-cols-2 gap-3">
-                        <div className="p-4 rounded-3xl bg-slate-900 border border-slate-800 space-y-3">
-                           <div className="flex items-center gap-2">
-                             <Bookmark className="w-4 h-4 text-amber-500" />
-                             <span className="text-[10px] font-black uppercase text-slate-400">Bookmarks</span>
-                           </div>
-                           <div className="space-y-2 overflow-y-auto max-h-[160px] scrollbar-thin">
-                             {savedPlaces.length === 0 ? (
-                               <p className="text-[9px] text-slate-600 italic">No bookmarks indexed.</p>
-                             ) : (
-                               savedPlaces.map(p => (
-                                 <button 
-                                   key={p.id}
-                                   onClick={() => {
-                                     triggerHaptic('open_panel');
-                                     handlePlaceClick(p);
-                                   }}
-                                   className="w-full p-2 text-left bg-slate-800/40 rounded-xl hover:bg-slate-700/40 transition-colors group"
-                                 >
-                                   <p className="text-[10px] font-bold text-white truncate group-hover:text-rose-400">{p.displayName || p.name || 'Untitled Spot'}</p>
-                                   <p className="text-[8px] text-slate-500 truncate mt-0.5">{p.formattedAddress || 'Global Coordinate'}</p>
-                                 </button>
-                               ))
-                             )}
-                           </div>
-                        </div>
-
-                        <div className="p-4 rounded-3xl bg-slate-900 border border-slate-800 space-y-3">
-                           <div className="flex items-center gap-2">
-                             <Ticket className="w-4 h-4 text-emerald-500" />
-                             <span className="text-[10px] font-black uppercase text-slate-400">Tokens</span>
-                           </div>
-                           <div className="space-y-2 overflow-y-auto max-h-[160px] scrollbar-thin">
-                             {MOCK_COUPONS.map(c => (
-                               <button 
-                                 key={c.id}
-                                 onClick={() => {
-                                   triggerHaptic('open_panel');
-                                   // Coupons usually link to specific partners or categories
-                                   setSelectedCategory('Coffee');
-                                   setActiveMode('perks');
-                                   triggerFlyover(SEOUL_MOCK_PLACES[4]);
-                                 }}
-                                 className="w-full p-2 text-left bg-slate-800/40 rounded-xl hover:bg-emerald-500/10 transition-colors group"
-                               >
-                                 <p className="text-[10px] font-bold text-emerald-400">{c.benefit}</p>
-                                 <p className="text-[8px] text-slate-500 mt-0.5">{c.shopName}</p>
-                               </button>
-                             ))}
-                           </div>
-                        </div>
-                      </div>
-
-                      {/* VANTI TELEMETRY ANALYTICS DASHBOARD */}
-                      <AnalyticsDashboard savedPlaces={savedPlaces} trajectoryLength={trajectory.length} />
-
-                      {/* [PETPY DNA]: PlaceMe Background Records & EOD Movie */}
-                      <div className="p-5 rounded-3xl bg-gradient-to-br from-violet-950/20 to-slate-950 border border-violet-500/20 space-y-4">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2.5">
-                            <Activity className="w-4 h-4 text-violet-400" />
-                            <h3 className="text-sm font-black text-white uppercase tracking-tighter italic">PlaceMe Records</h3>
-                          </div>
-                          <button 
-                            onClick={() => {
-                                setIsRecording(!isRecording);
-                                triggerHaptic('switch');
-                            }}
-                            className={cn(
-                                "px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest transition-all",
-                                isRecording ? "bg-rose-500 text-white animate-pulse" : "bg-slate-800 text-slate-400"
-                            )}
-                          >
-                            {isRecording ? "● RECORDING" : "DISABLED"}
-                          </button>
-                        </div>
-                        
-                        <div className="space-y-2">
-                           <div className="flex justify-between text-[10px] text-slate-400 font-mono">
-                              <span>SENSORY LOGS</span>
-                              <span>{trajectory.length} NODES</span>
-                           </div>
-                           <div className="h-1 bg-slate-900 rounded-full overflow-hidden">
-                              <motion.div 
-                                className="h-full bg-violet-500" 
-                                initial={{ width: "0%" }}
-                                animate={{ width: `${Math.min(100, trajectory.length * 5)}%` }}
-                              />
-                           </div>
-                        </div>
-
-                        <button 
-                          onClick={simulateEodMovie}
-                          disabled={trajectory.length < 2}
-                          className="w-full py-3 bg-white text-black font-display text-xs font-black uppercase tracking-[0.1em] rounded-2xl hover:bg-violet-400 hover:text-white transition-all disabled:opacity-20 disabled:grayscale flex items-center justify-center gap-2 shadow-xl shadow-violet-500/10 active:scale-95"
+                      <AnimatePresence mode="wait">
+                        <motion.div
+                          key={activeHubTab}
+                          initial={{ opacity: 0, x: 20 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          exit={{ opacity: 0, x: -20 }}
+                          transition={{ duration: 0.3, ease: [0.23, 1, 0.32, 1] }}
                         >
-                          <Video className="w-4 h-4" /> Generate EOD Cinematic Movie
-                        </button>
-                        <p className="text-[9px] text-slate-500 text-center leading-relaxed">
-                          펫피 산책 루프를 이식한 앰비언트 센싱 모드입니다. <br/>
-                          저녁 8시가 되면 오늘의 궤적을 3D 시네마틱 무비로 복개합니다.
-                        </p>
-                      </div>
-                      </div>
-                      ) : null}
-
-                      {/* Offline Map Downloader Segment */}
-                      {activeHubTab === 'offline' ? (
-                        <div className="p-4 rounded-xl bg-slate-900 border border-slate-800 space-y-3.5 shadow-inner animate-fadeIn">
-                          <div className="flex justify-between items-center">
-                            <h6 className="text-[10px] uppercase font-bold text-slate-400 tracking-wider flex items-center gap-1.5 font-sans">
-                              <Download className="w-3.5 h-3.5 text-rose-400 animate-pulse" /> Area Cache Node
-                            </h6>
-                            {isDownloading ? (
-                              <span className="text-[9px] font-mono font-bold text-rose-400 animate-pulse">
-                                SYNCING...
-                              </span>
-                            ) : downloadSuccess ? (
-                              <span className="text-[9px] font-mono font-bold text-emerald-400">
-                                CACHED
-                              </span>
-                            ) : null}
-                          </div>
-                          
-                          <button
-                            type="button"
-                            onClick={handleDownloadArea}
-                            disabled={isDownloading}
-                            className="w-full py-2.5 rounded-lg bg-white/5 hover:bg-white/10 active:bg-white/20 border border-white/10 text-white text-xs font-bold transition-all flex items-center justify-center gap-2"
-                          >
-                            {isDownloading ? <Loader2 className="w-4 h-4 animate-spin text-rose-400" /> : <Download className="w-4 h-4" />}
-                            {isDownloading ? 'Capturing Area...' : 'Download Current Bounds'}
-                          </button>
-
-                          {/* Beautiful Interactive Visual Progress Bar */}
-                          {isDownloading ? (
-                            <div className="space-y-2 pt-2 border-t border-slate-800/80">
-                              <div className="flex justify-between items-center text-[9px] font-mono">
-                                <span className="text-slate-400 font-medium uppercase">{downloadStage}</span>
-                                <span className="text-rose-400 font-extrabold">{downloadProgress}%</span>
-                              </div>
-                              <div className="h-1.5 w-full bg-slate-950 rounded-full overflow-hidden p-0.5 border border-slate-850">
-                                <motion.div 
-                                  className="h-full bg-rose-500 rounded-full" 
-                                  initial={{ width: "0%" }}
-                                  animate={{ width: `${downloadProgress}%` }}
-                                  transition={{ ease: "easeInOut" }}
-                                />
-                              </div>
-                              <div className="flex justify-between items-center text-[8px] text-slate-500 font-mono">
-                                <span>NET: 4.8 MB/s</span>
-                                <span>PAYLOAD: ~12.4 MB</span>
-                              </div>
-                            </div>
-                          ) : null}
-
-                          {downloadSuccess ? (
-                            <div className="p-2.5 bg-emerald-950/25 border border-emerald-500/20 rounded-xl text-center">
-                              <span className="text-[9px] font-mono font-bold text-emerald-400 uppercase tracking-wider block">
-                                ✓ Cache Sync Successful
-                              </span>
-                              <span className="text-[8px] text-slate-500 block mt-0.5">
-                                100% vector tiles and active viewport POI nodes stored locally.
-                              </span>
-                            </div>
-                          ) : null}
-                        </div>
-                      ) : null}
-
-                      {activeHubTab === 'hub' ? (
-                        <div className="space-y-6 animate-fadeIn">
-                          {/* VPay wallet widget */}
-                      <div className="p-5 rounded-2xl bg-gradient-to-br from-violet-600 via-indigo-700 to-indigo-900 text-white shadow-xl flex flex-col justify-between h-40 border border-violet-500/30 relative overflow-hidden">
-                        <div className="absolute right-[-10px] bottom-[-20px] opacity-15">
-                          <Wallet className="w-32 h-32" />
-                        </div>
-                        <div className="flex justify-between items-start">
-                          <div>
-                            <p className="text-[9px] uppercase tracking-widest font-black text-violet-200">VANTi Pay Node</p>
-                            <h5 className="text-sm font-semibold mt-1">Premium Digital Wallet</h5>
-                          </div>
-                          <div className="px-2 py-0.5 bg-white/20 backdrop-blur-md rounded text-[9px] uppercase tracking-wider font-extrabold">Active</div>
-                        </div>
-                        <div>
-                          <p className="text-[10px] text-violet-200">Direct Token balance</p>
-                          <div className="flex items-baseline gap-1 mt-1">
-                            <span className="text-2xl font-display font-black">124,500</span>
-                            <span className="text-xs font-semibold text-violet-300">VP</span>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* OS Diagnostics & Telemetry (GNB 6 Core Upgrade) */}
-                      <div className="p-4 rounded-xl bg-slate-950/80 border border-slate-800 space-y-3 shadow-inner">
-                        <div className="flex justify-between items-center border-b border-slate-800 pb-2">
-                          <h6 className="text-[10px] uppercase font-bold text-slate-400 tracking-wider flex items-center gap-1.5">
-                            <Activity className="w-3.5 h-3.5 text-indigo-400 animate-pulse" /> OS Node Telemetry
-                          </h6>
-                          <span className="text-[9px] font-mono font-bold text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20 uppercase tracking-widest">
-                            STABLE
-                          </span>
-                        </div>
-                        <div className="grid grid-cols-2 gap-2 text-xs">
-                          <div className="p-2 rounded bg-[#111319]/80 border border-slate-900 flex flex-col">
-                            <span className="text-[9px] text-slate-500 uppercase font-bold">Network Ping</span>
-                            <span className="font-mono text-white font-extrabold flex items-center gap-1 mt-0.5">
-                              <Wifi className="w-3.5 h-3.5 text-emerald-400" /> {pingLatency} ms
-                            </span>
-                          </div>
-                          <div className="p-2 rounded bg-[#111319]/80 border border-slate-900 flex flex-col">
-                            <span className="text-[9px] text-slate-550 uppercase font-bold">Memory Cache</span>
-                            <span className="font-mono text-white font-extrabold flex items-center gap-1 mt-0.5">
-                              <Box className="w-3.5 h-3.5 text-indigo-400" /> 42.4 MB
-                            </span>
-                          </div>
-                          <div className="p-2 rounded bg-[#111319]/80 border border-slate-900 flex flex-col col-span-2">
-                            <div className="flex justify-between text-[9px] text-slate-500 font-bold uppercase mb-1">
-                              <span className="flex items-center gap-1"><Battery className="w-3.5 h-3.5 text-blue-400" /> System Charge</span>
-                              <span className="font-mono text-blue-400">88%</span>
-                            </div>
-                            <div className="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
-                              <div className="bg-gradient-to-r from-blue-500 to-indigo-500 h-full rounded-full" style={{ width: '88%' }} />
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Saves Counters widget info */}
-                      <div className="grid grid-cols-2 gap-2">
-                        <div className="p-4 rounded-xl bg-[#141720]/80 border border-slate-800 text-center">
-                          <h6 className="text-[9px] uppercase tracking-wider font-black text-slate-500">Saved Places</h6>
-                          <p className="text-xl font-display font-extrabold text-white mt-1">{savedPlaces.length}</p>
-                        </div>
-                        <div className="p-4 rounded-xl bg-[#141720]/80 border border-slate-800 text-center">
-                          <h6 className="text-[9px] uppercase tracking-wider font-black text-slate-500">Active Vouchers</h6>
-                          <p className="text-xl font-display font-extrabold text-emerald-400 mt-1">{MOCK_COUPONS.length}</p>
-                        </div>
-                      </div>
-
-                      {/* Interactive scratch card widget (Merged from Perks) */}
-                      <div className="p-4.5 rounded-2xl bg-[#141720]/90 border border-slate-800 space-y-3.5 relative overflow-hidden">
-                        <div className="flex justify-between items-center">
-                          <span className="text-[9px] font-black uppercase text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20 tracking-wider">
-                            🎰 Weekly Lucky Draw
-                          </span>
-                          <span className="text-[9px] text-slate-500 font-mono">1/1 Active</span>
-                        </div>
-                        <div className="space-y-1">
-                          <h6 className="text-sm font-bold text-white">Mystery Coffee Voucher</h6>
-                          <p className="text-[11px] text-slate-400">Tap the silver hologram sticker below to scratch and claim your free morning brew code.</p>
-                        </div>
-
-                        {/* Foil block */}
-                        <div className="relative h-16 rounded-xl overflow-hidden cursor-pointer select-none">
-                          <AnimatePresence mode="wait">
-                            {!scratchedCoupons.includes('mystery_brew') ? (
-                              <motion.div
-                                key="foil"
-                                exit={{ opacity: 0, scale: 0.95 }}
-                                transition={{ duration: 0.4 }}
-                                onClick={() => {
-                                  triggerHaptic('impact');
-                                  setScratchedCoupons(prev => [...prev, 'mystery_brew']);
-                                }}
-                                className="absolute inset-0 bg-gradient-to-tr from-slate-400 via-slate-300 to-slate-500 flex items-center justify-center border border-white/25 shadow-inner"
-                              >
-                                <div className="text-center">
-                                  <span className="font-mono text-[10px] text-slate-700 font-black tracking-widest uppercase flex items-center gap-1.5 justify-center">
-                                    ✨ TAP HERE TO SCRATCH ✨
-                                  </span>
-                                  <span className="text-[8px] text-slate-600 block mt-0.5">Vanti Cryptographic Hologram Layer</span>
-                                </div>
-                              </motion.div>
-                            ) : (
-                              <motion.div
-                                key="reveal"
-                                initial={{ opacity: 0, scale: 1.05 }}
-                                animate={{ opacity: 1, scale: 1 }}
-                                className="absolute inset-0 bg-gradient-to-tr from-emerald-950 to-slate-950 flex items-center justify-between px-4 border border-emerald-500/20 rounded-xl"
-                              >
-                                <div className="space-y-0.5">
-                                  <span className="text-[8px] text-emerald-400 font-bold uppercase tracking-wider block">Scratch Revealed!</span>
-                                  <h6 className="text-xs text-white font-bold">1 Free Premium Flat White</h6>
-                                </div>
-                                <div className="px-3 py-1 bg-emerald-500/20 border border-emerald-400/30 text-emerald-400 font-mono text-xs font-black select-all rounded-lg uppercase tracking-wider animate-pulse shadow-[0_0_15px_rgba(16,185,129,0.2)]">
-                                  BREW-NEON-VANTI
-                                </div>
-                              </motion.div>
-                            )}
-                          </AnimatePresence>
-                        </div>
-                      </div>
-
-                      {/* Active Vouchers items list inside Profile */}
-                      <div>
-                        <h5 className="text-xs font-black uppercase text-slate-400 tracking-wider mb-2 flex items-center gap-1.5">
-                          <Ticket className="w-4 h-4 text-emerald-400" /> My Reward Vouchers
-                        </h5>
-                        <div className="space-y-2">
-                          {MOCK_COUPONS.map((co) => (
-                            <div 
-                              key={co.id} 
-                              onClick={() => {
-                                triggerHaptic('open_panel');
-                                // Deep link merchant to mock place
-                                const place = SEOUL_MOCK_PLACES.find(p => p.displayName.includes(co.shopName) || co.shopName.includes(p.displayName));
-                                if (place) {
-                                  handlePlaceClick(place);
-                                } else {
-                                  setSelectedCategory('Dining');
-                                  triggerFlyover(SEOUL_MOCK_PLACES[0]);
-                                }
-                              }}
-                              className="p-3.5 rounded-xl bg-slate-900 border border-slate-800 flex justify-between items-center bg-[#111319]/80 cursor-pointer hover:border-emerald-500/30 transition-all active:scale-[0.98]"
-                            >
-                              <div>
-                                <h6 className="text-xs text-white font-bold max-w-[170px] truncate">{co.shopName}</h6>
-                                <p className="text-[11px] text-emerald-400 mt-0.5">{co.benefit}</p>
-                              </div>
-                              <div className="border border-emerald-500/30 bg-emerald-500/10 text-emerald-400 px-2.5 py-1 rounded-lg font-mono text-[10px] font-bold select-all">
-                                {co.code}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                      </div>
-                      ) : null}
-
-                      {/* Downloaded Offline Map Areas list */}
-                      {activeHubTab === 'offline' ? (
-                        <div className="space-y-4 animate-fadeIn">
-                          <h5 className="text-xs font-black uppercase text-slate-400 tracking-wider mb-2 flex items-center gap-1.5 mt-6">
-                            <Download className="w-4 h-4 text-blue-400 animate-pulse" /> Cache Control Register
-                          </h5>
-                          {offlineAreas.length === 0 ? (
-                            <div className="p-4 rounded-xl border border-dashed border-slate-700 text-center">
-                              <p className="text-xs text-slate-500 uppercase font-mono">No offline areas cached</p>
-                            </div>
-                          ) : (
-                            <div className="space-y-2">
-                              {offlineAreas.map((area) => (
-                                <div key={area.id} className="p-3.5 rounded-xl bg-slate-900 border border-slate-800 bg-[#111319]/85 flex flex-col gap-2 relative overflow-hidden group hover:border-blue-500/20 transition-all">
-                                  <div className="flex justify-between items-center">
-                                    {editingAreaId === area.id ? (
-                                      <input 
-                                        type="text" 
-                                        value={editingAreaName}
-                                        onChange={(e) => setEditingAreaName(e.target.value)}
-                                        className="bg-slate-800 text-white text-xs px-2 py-1 rounded-md flex-1 mr-2 outline-none border border-blue-500/50 font-mono"
-                                        autoFocus
-                                        onKeyDown={async (e) => {
-                                          if (e.key === 'Enter') {
-                                            triggerHaptic('tap');
-                                            await renameOfflineArea(area.id, editingAreaName);
-                                            setEditingAreaId(null);
-                                            setOfflineAreas(await getOfflineAreas());
-                                          }
-                                        }}
-                                        onBlur={async () => {
-                                          triggerHaptic('tap');
-                                          await renameOfflineArea(area.id, editingAreaName);
-                                          setEditingAreaId(null);
-                                          setOfflineAreas(await getOfflineAreas());
-                                        }}
-                                      />
-                                    ) : (
-                                      <h6 
-                                        className="text-xs text-white font-mono font-bold cursor-text hover:text-blue-300 transition-colors"
-                                        onClick={() => {
-                                          triggerHaptic('tap');
-                                          setEditingAreaId(area.id);
-                                          setEditingAreaName(area.name);
-                                        }}
-                                      >
-                                        {area.name}
-                                      </h6>
+                          {activeHubTab === 'hub' && (
+                            <div className="space-y-6">
+                              {/* Visual Fidelity & Accessibility */}
+                              <div className="space-y-4">
+                                <h3 className="text-xs font-black text-slate-500 uppercase tracking-widest px-1">Visual Fidelity & Accessibility</h3>
+                                <div className="grid grid-cols-2 gap-3">
+                                  <button 
+                                    onClick={() => setAccessibilityScale(accessibilityScale === 1 ? 1.25 : 1)}
+                                    className={cn(
+                                      "p-4 rounded-3xl border transition-all text-left space-y-2",
+                                      accessibilityScale > 1 ? "bg-indigo-500/20 border-indigo-500/50" : "bg-[#111319]/80 border-slate-800"
                                     )}
-                                    <button 
-                                      type="button"
-                                      className="p-1 text-slate-500 hover:text-red-400 transition-colors"
-                                      onClick={async () => {
-                                        triggerHaptic('tap');
-                                        await deleteOfflineArea(area.id);
-                                        setOfflineAreas(await getOfflineAreas());
-                                      }}
-                                    >
-                                      <X className="w-4 h-4" />
-                                    </button>
+                                  >
+                                    <div className={cn("w-8 h-8 rounded-xl flex items-center justify-center translate-y-0 shadow-lg", accessibilityScale > 1 ? "bg-indigo-500 text-white" : "bg-white/10 text-slate-400")}>
+                                      <span className="text-sm font-black text-[10px]">A+</span>
+                                    </div>
+                                    <div className="text-[10px] font-black uppercase text-white tracking-widest leading-none">Legibility</div>
+                                    <p className="text-[8px] text-slate-500 font-medium leading-tight">Scales interface text for optimal accessibility.</p>
+                                  </button>
+                                  <button 
+                                    onClick={() => setIsPrefetchingEnabled(!isPrefetchingEnabled)}
+                                    className={cn(
+                                      "p-4 rounded-3xl border transition-all text-left space-y-2",
+                                      isPrefetchingEnabled ? "bg-emerald-500/20 border-emerald-500/50" : "bg-[#111319]/80 border-slate-800"
+                                    )}
+                                  >
+                                    <div className={cn("w-8 h-8 rounded-xl flex items-center justify-center translate-y-0 shadow-lg", isPrefetchingEnabled ? "bg-emerald-500 text-white" : "bg-white/10 text-slate-400")}>
+                                      <TrendingUp className="w-4 h-4" />
+                                    </div>
+                                    <div className="text-[10px] font-black uppercase text-white tracking-widest leading-none">Prefetch</div>
+                                    <p className="text-[8px] text-slate-500 font-medium leading-tight">Predictive data caching for lag-free exploration.</p>
+                                  </button>
+                                </div>
+                              </div>
+
+                              {/* Traveler Rewards & Identity */}
+                              <TravelerBadges />
+
+                              {/* CURATED COLLECTIONS - Moved to OS HUB Library */}
+                          <div className="space-y-3">
+                            <div className="flex items-center gap-2 px-1">
+                              <Layers className="w-4 h-4 text-rose-500" />
+                              <h5 className="text-[10px] uppercase font-black tracking-widest text-slate-400">Discovery Library</h5>
+                            </div>
+                            {CURATED_LISTS.map((list, idx) => (
+                              <motion.div 
+                                key={list.id} 
+                                initial={{ opacity: 0, y: 10 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                transition={{ delay: idx * 0.05 }}
+                                onClick={() => {
+                                  triggerHaptic('tap');
+                                  setActiveCollection(list.id);
+                                  if (list.id === 'canada_working_holiday') {
+                                    setActiveMode('canada');
+                                    setMapCenter(CANADA_CENTER);
+                                    setMapZoom(13.5);
+                                  } else if (list.id === 'night_vision') {
+                                    setMapTheme('Night');
+                                    triggerFlyover(SEOUL_MOCK_PLACES[1]);
+                                  } else {
+                                    triggerFlyover(SEOUL_MOCK_PLACES[0]);
+                                  }
+                                  setShowList(true); // Open panel to show filtered spots
+                                }}
+                                className={cn(
+                                  "p-4 rounded-2xl bg-[#111319]/80 border cursor-pointer group transition-all active:scale-95",
+                                  activeCollection === list.id ? "border-rose-500/50 shadow-[0_0_20px_rgba(244,63,94,0.1)]" : "border-slate-800 hover:border-slate-700"
+                                )}
+                              >
+                                <div className="flex justify-between items-center">
+                                  <div>
+                                    <h6 className={cn(
+                                      "text-[11px] font-black uppercase tracking-tight transition-colors",
+                                      activeCollection === list.id ? "text-rose-400" : "text-white group-hover:text-rose-400"
+                                    )}>{list.title}</h6>
+                                    <p className="text-[9px] text-slate-500 mt-1 font-medium leading-relaxed">{list.description}</p>
                                   </div>
-                                  <div className="flex justify-between items-end text-[10px] text-slate-500 font-mono">
-                                    <span>{new Date(area.savedAt).toLocaleDateString()}</span>
-                                    <span>{area.places?.length || 0} Places</span>
+                                  <ChevronRight className={cn(
+                                    "w-4 h-4 transition-all",
+                                    activeCollection === list.id ? "text-rose-500" : "text-slate-700 group-hover:text-rose-500"
+                                  )} />
+                                </div>
+                              </motion.div>
+                            ))}
+                          </div>
+
+                          {/* OS HUB: SAVED PLACES & VOUCHERS INTEGRATION */}
+                          <div className="grid grid-cols-2 gap-3">
+                            <div className="p-4 rounded-3xl bg-slate-900 border border-slate-800 space-y-3">
+                               <div className="flex items-center gap-2">
+                                 <Bookmark className="w-4 h-4 text-amber-500" />
+                                 <span className="text-[10px] font-black uppercase text-slate-400">Bookmarks</span>
+                               </div>
+                               <div className="space-y-2 overflow-y-auto max-h-[160px] scrollbar-thin">
+                                 {savedPlaces.length === 0 ? (
+                                   <p className="text-[9px] text-slate-600 italic">No bookmarks indexed.</p>
+                                 ) : (
+                                   savedPlaces.map(p => (
+                                     <button 
+                                       key={p.id}
+                                       onClick={() => {
+                                         triggerHaptic('open_panel');
+                                         handlePlaceClick(p);
+                                       }}
+                                       className="w-full p-2 text-left bg-slate-800/40 rounded-xl hover:bg-slate-700/40 transition-colors group"
+                                     >
+                                      <p className="text-[10px] font-bold text-white truncate group-hover:text-rose-400">{p.displayName || (p as any).name || 'Untitled Spot'}</p>
+                                       <p className="text-[8px] text-slate-500 truncate mt-0.5">{p.formattedAddress || 'Global Coordinate'}</p>
+                                     </button>
+                                   ))
+                                 )}
+                               </div>
+                            </div>
+
+                            <div className="p-4 rounded-3xl bg-slate-900 border border-slate-800 space-y-3">
+                               <div className="flex items-center gap-2">
+                                 <Ticket className="w-4 h-4 text-emerald-500" />
+                                 <span className="text-[10px] font-black uppercase text-slate-400">Tokens</span>
+                               </div>
+                               <div className="space-y-2 overflow-y-auto max-h-[160px] scrollbar-thin">
+                                 {MOCK_COUPONS.map(c => (
+                                   <button 
+                                     key={c.id}
+                                     onClick={() => {
+                                       triggerHaptic('open_panel');
+                                       // Coupons usually link to specific partners or categories
+                                       setSelectedCategory('Coffee');
+                                       setActiveMode('perks');
+                                       triggerFlyover(SEOUL_MOCK_PLACES[4]);
+                                     }}
+                                     className="w-full p-2 text-left bg-slate-800/40 rounded-xl hover:bg-emerald-500/10 transition-colors group"
+                                   >
+                                     <p className="text-[10px] font-bold text-emerald-400">{c.benefit}</p>
+                                     <p className="text-[8px] text-slate-500 mt-0.5">{c.shopName}</p>
+                                   </button>
+                                 ))}
+                               </div>
+                            </div>
+                          </div>
+
+                          {/* VANTI TELEMETRY ANALYTICS DASHBOARD */}
+                          <AnalyticsDashboard savedPlaces={savedPlaces} trajectoryLength={trajectory.length} />
+
+                          {/* [PETPY DNA]: PlaceMe Background Records & EOD Movie */}
+                          <div className="p-5 rounded-3xl bg-gradient-to-br from-violet-950/20 to-slate-950 border border-violet-500/20 space-y-4">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2.5">
+                                <Activity className="w-4 h-4 text-violet-400" />
+                                <h3 className="text-sm font-black text-white uppercase tracking-tighter italic">PlaceMe Records</h3>
+                              </div>
+                              <button 
+                                onClick={() => {
+                                    setIsRecording(!isRecording);
+                                    triggerHaptic('switch');
+                                }}
+                                className={cn(
+                                    "px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest transition-all",
+                                    isRecording ? "bg-rose-500 text-white animate-pulse" : "bg-slate-800 text-slate-400"
+                                )}
+                              >
+                                {isRecording ? "● RECORDING" : "DISABLED"}
+                              </button>
+                            </div>
+                            
+                            <div className="space-y-2">
+                               <div className="flex justify-between text-[10px] text-slate-400 font-mono">
+                                  <span>SENSORY LOGS</span>
+                                  <span>{trajectory.length} NODES</span>
+                               </div>
+                               <div className="h-1 bg-slate-900 rounded-full overflow-hidden">
+                                  <motion.div 
+                                    className="h-full bg-violet-500" 
+                                    initial={{ width: "0%" }}
+                                    animate={{ width: `${Math.min(100, trajectory.length * 5)}%` }}
+                                  />
+                               </div>
+                            </div>
+
+                            <button 
+                              onClick={simulateEodMovie}
+                              disabled={trajectory.length < 2}
+                              className="w-full py-3 bg-white text-black font-display text-xs font-black uppercase tracking-[0.1em] rounded-2xl hover:bg-violet-400 hover:text-white transition-all disabled:opacity-20 disabled:grayscale flex items-center justify-center gap-2 shadow-xl shadow-violet-500/10 active:scale-95"
+                            >
+                              <Video className="w-4 h-4" /> Generate EOD Cinematic Movie
+                            </button>
+                            <p className="text-[9px] text-slate-500 text-center leading-relaxed">
+                              펫피 산책 루프를 이식한 앰비언트 센싱 모드입니다. <br/>
+                              저녁 8시가 되면 오늘의 궤적을 3D 시네마틱 무비로 복개합니다.
+                            </p>
+                          </div>
+                          </div>
+                          )}
+
+                          {activeHubTab === 'offline' && (
+                            <div className="p-4 rounded-xl bg-gray-900/50 border border-slate-800 space-y-4">
+                              <div className="flex justify-between items-center">
+                                <h6 className="text-[10px] uppercase font-bold text-slate-400 tracking-wider flex items-center gap-1.5 font-sans">
+                                  <Download className="w-3.5 h-3.5 text-rose-400 animate-pulse" /> Area Cache Node
+                                </h6>
+                                {isDownloading ? (
+                                  <span className="text-[9px] font-mono font-bold text-rose-400 animate-pulse">
+                                    SYNCING...
+                                  </span>
+                                ) : downloadSuccess ? (
+                                  <span className="text-[9px] font-mono font-bold text-emerald-400">
+                                    CACHED
+                                  </span>
+                                ) : null}
+                              </div>
+                              
+                              <button
+                                type="button"
+                                onClick={handleDownloadArea}
+                                disabled={isDownloading}
+                                className="w-full py-2.5 rounded-lg bg-white/5 hover:bg-white/10 active:bg-white/20 border border-white/10 text-white text-xs font-bold transition-all flex items-center justify-center gap-2"
+                              >
+                                {isDownloading ? <Loader2 className="w-4 h-4 animate-spin text-rose-400" /> : <Download className="w-4 h-4" />}
+                                {isDownloading ? 'Capturing Area...' : 'Download Current Bounds'}
+                              </button>
+
+                              {isDownloading ? (
+                                <div className="space-y-2 pt-2">
+                                  <div className="flex justify-between items-center text-[9px] font-mono">
+                                    <span className="text-slate-400 font-medium uppercase">{downloadStage}</span>
+                                    <span className="text-rose-400 font-extrabold">{downloadProgress}%</span>
+                                  </div>
+                                  <div className="h-1 w-full bg-slate-950 rounded-full overflow-hidden">
+                                    <motion.div 
+                                      className="h-full bg-rose-500" 
+                                      initial={{ width: "0%" }}
+                                      animate={{ width: `${downloadProgress}%` }}
+                                      transition={{ ease: "easeInOut" }}
+                                    />
                                   </div>
                                 </div>
-                              ))}
+                              ) : null}
+
+                              {offlineAreas.length > 0 && (
+                                <div className="space-y-2 pt-4">
+                                  <h5 className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Cached Regions</h5>
+                                  {offlineAreas.map(area => (
+                                    <div key={area.id} className="p-3 bg-slate-900 border border-slate-800 rounded-xl flex justify-between items-center">
+                                      <span className="text-[10px] font-bold text-slate-200">{area.name}</span>
+                                      <button onClick={() => deleteOfflineArea(area.id)} className="text-rose-400 hover:text-rose-300">
+                                        <X className="w-3.5 h-3.5" />
+                                      </button>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
                             </div>
                           )}
-                        </div>
-                      ) : null}
 
-                      {/* HIGH FIDELITY TRIP PLANNER TAB */}
-                      {activeHubTab === 'planner' ? (
-                        <div className="animate-fadeIn">
-                          <TripPlannerTab 
-                            map={map}
-                            savedPlaces={savedPlaces}
-                            userLocation={userLocation}
-                            triggerHaptic={(ty: any) => triggerHaptic(ty === 'heavy' ? 'impact' : ty)}
-                            onFocusCoordinates={(lat, lng) => {
-                              if (map) {
-                                map.panTo({ lat, lng });
-                                map.setZoom(16.5);
-                              }
-                            }}
-                          />
-                        </div>
-                      ) : null}
+                          {activeHubTab === 'planner' && (
+                            <TripPlannerTab 
+                              map={map}
+                              savedPlaces={savedPlaces}
+                              userLocation={userLocation}
+                              triggerHaptic={(ty: any) => triggerHaptic(ty === 'heavy' ? 'impact' : ty)}
+                              onFocusCoordinates={(lat, lng) => {
+                                if (map) {
+                                  map.panTo({ lat, lng });
+                                  map.setZoom(16.5);
+                                }
+                              }}
+                            />
+                          )}
 
-                      {/* IMMERSIVE TRAVEL DIARY SOCIAL TAB */}
-                      {activeHubTab === 'diary' ? (
-                        <TravelDiary
-                          user={user}
-                          selectedPlace={selectedPlace}
-                          userLocation={userLocation}
-                          language={language}
-                          onClose={() => {
-                             setActiveMode('all');
-                             triggerHaptic('close');
-                          }}
-                          onRecenter={(lat, lng) => {
-                            if (map) {
-                              map.panTo({ lat, lng });
-                              map.setZoom(14.5);
-                            }
-                          }}
-                        />
-                      ) : null}
+                          {activeHubTab === 'summary' && (
+                            <AILogPanel onClose={() => setActiveHubTab('hub')} />
+                          )}
 
+                          {activeHubTab === 'diary' && (
+                            <TravelDiary
+                              user={user}
+                              selectedPlace={selectedPlace}
+                              userLocation={userLocation}
+                              language={language}
+                              onClose={() => {
+                                 setActiveMode('all');
+                                 triggerHaptic('close');
+                              }}
+                              onRecenter={(lat, lng) => {
+                                if (map) {
+                                  map.panTo({ lat, lng });
+                                  map.setZoom(14.5);
+                                }
+                              }}
+                            />
+                          )}
+
+                          {activeHubTab === 'recommended' && (
+                            <RecommendedTab 
+                              savedPlaces={savedPlaces}
+                              onFocusPlace={(place) => {
+                                if (map && place.lat && place.lng) {
+                                  map.panTo({ lat: place.lat, lng: place.lng });
+                                  map.setZoom(15);
+                                }
+                              }}
+                            />
+                          )}
+
+                          {activeHubTab === 'events' && (
+                            <CulturalEventsTab 
+                              placesLib={placesLib}
+                              mapCenter={debouncedCenter}
+                              setEventPlaces={setEventPlaces}
+                              onFocusPlace={(place) => {
+                                if (map && place.location) {
+                                  map.panTo({ lat: place.location.lat(), lng: place.location.lng() });
+                                  map.setZoom(16);
+                                  handlePlaceClick(place);
+                                }
+                              }}
+                            />
+                          )}
+                        </motion.div>
+                      </AnimatePresence>
                     </div>
-                  </div>
+                  </motion.div>
 
                   {/* SOCIAL ACTIVITY LAYER */}
-                  <div className={cn(
-                    "space-y-4 transition-all duration-500",
-                    activeMode === 'social' 
-                      ? "opacity-100 translate-y-0 pointer-events-auto" 
-                      : "opacity-0 translate-y-4 pointer-events-none absolute inset-x-4 top-4"
-                  )}>
+                  <motion.div 
+                    initial={false}
+                    animate={{ 
+                      opacity: activeMode === 'social' ? 1 : 0, 
+                      y: activeMode === 'social' ? 0 : 20,
+                      pointerEvents: activeMode === 'social' ? 'auto' : 'none'
+                    }}
+                    transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+                    className={cn(
+                      "space-y-4",
+                      activeMode !== 'social' && "absolute inset-x-4 top-4"
+                    )}
+                  >
                     <div className="space-y-4">
                       {/* Active friends scrolling */}
                       <div>
@@ -5018,15 +6081,22 @@ const VantiMap = React.memo(function VantiMap() {
                         )}
                       </div>
                     </div>
-                  </div>
+                  </motion.div>
 
                   {/* GENIUS / AI LAYER */}
-                  <div className={cn(
-                    "space-y-4 transition-all duration-500",
-                    activeMode === 'genius' 
-                      ? "opacity-100 translate-y-0 pointer-events-auto" 
-                      : "opacity-0 translate-y-4 pointer-events-none absolute inset-x-4 top-4"
-                  )}>
+                  <motion.div 
+                    initial={false}
+                    animate={{ 
+                      opacity: activeMode === 'genius' ? 1 : 0, 
+                      y: activeMode === 'genius' ? 0 : 20,
+                      pointerEvents: activeMode === 'genius' ? 'auto' : 'none'
+                    }}
+                    transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+                    className={cn(
+                      "space-y-4",
+                      activeMode !== 'genius' && "absolute inset-x-4 top-4"
+                    )}
+                  >
                     {/* WEATHER-AWARE ROUTE OPTIMIZATION MODULE */}
                     <WeatherRouteOptimizer
                       userLocation={userLocation}
@@ -5057,7 +6127,7 @@ const VantiMap = React.memo(function VantiMap() {
                         <Sparkles className="w-4 h-4" /> Start Quantum Scan
                       </button>
                     </div>
-                  </div>
+                  </motion.div>
 
                 </div>
               </motion.div>
@@ -5146,12 +6216,6 @@ const VantiMap = React.memo(function VantiMap() {
       }}
     />
 
-    <MapLegend
-      activeWeather={activeWeather}
-      showTraffic={showTrafficLayer}
-      showPins={showPinsLayer}
-    />
-
     <DeveloperInsights
       isOpen={isDeveloperInsightsOpen}
       onClose={() => setIsDeveloperInsightsOpen(false)}
@@ -5161,6 +6225,7 @@ const VantiMap = React.memo(function VantiMap() {
         offlineRegionCount: offlineAreas.length,
         searchHistoryCount: user ? recentSearches.length : localRecentSearches.length
       }}
+      perfStats={prefStats}
     />
 
     {/* Quick-Save Bookmark Status Toast */}
@@ -5326,6 +6391,8 @@ const VantiMap = React.memo(function VantiMap() {
         </motion.div>
       )}
     </AnimatePresence>
+
+    <GestureOnboarding />
 
     </motion.div>
   </div>

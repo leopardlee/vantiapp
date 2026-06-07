@@ -1,8 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { MessageSquare, X, Send, Sparkles, Loader2, Video, Bot, Image as ImageIcon, MapPin, Check } from 'lucide-react';
+import { MessageSquare, X, Send, Sparkles, Loader2, Video, Bot, Image as ImageIcon, MapPin, Check, Mic, MicOff } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useMap } from '@vis.gl/react-google-maps';
+import { useVoiceNavigation } from '../hooks/useVoiceNavigation';
+import { useVantiStore } from '../store/vantiStore';
 
 const TaskListItem = ({ loc, key }: { loc: string; key?: any }) => {
   const [done, setDone] = useState(false);
@@ -17,7 +19,8 @@ const TaskListItem = ({ loc, key }: { loc: string; key?: any }) => {
 };
 
 export default function Chatbot({ onMapCommand, isVisible = true }: { onMapCommand?: (name: string, args: any) => void; isVisible?: boolean }) {
-  const [isOpen, setIsOpen] = useState(false);
+  const isOpen = useVantiStore(state => state.isChatbotOpen);
+  const setIsOpen = useVantiStore(state => state.setIsChatbotOpen);
   const [messages, setMessages] = useState<{ 
     role: 'user' | 'assistant'; 
     text: string; 
@@ -35,6 +38,29 @@ export default function Chatbot({ onMapCommand, isVisible = true }: { onMapComma
   const map = useMap();
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const { isListening, startListening, stopListening } = useVoiceNavigation((command) => {
+    setInput(command);
+    // For hands-free: trigger submit if we have a strong match
+    if (command.trim().length > 2) {
+      setTimeout(() => {
+        const fakeEvent = { preventDefault: () => {} } as any;
+        handleSubmit(fakeEvent, command);
+      }, 500);
+    }
+  });
+
+  const triggerHaptic = (type: 'tap' | 'success' | 'close') => {
+    if (typeof navigator !== 'undefined' && navigator.vibrate) {
+      try {
+        if (type === 'tap') navigator.vibrate(12);
+        else if (type === 'success') navigator.vibrate([15, 30, 15]);
+        else if (type === 'close') navigator.vibrate([10, 25]);
+      } catch (e) {
+        // Safe failover
+      }
+    }
+  };
 
   useEffect(() => {
     if (messagesEndRef.current) {
@@ -62,12 +88,14 @@ export default function Chatbot({ onMapCommand, isVisible = true }: { onMapComma
     }
   };
 
-  const handleSubmit = async (e?: React.FormEvent) => {
+  const handleSubmit = async (e?: React.FormEvent, overrideInput?: string) => {
     e?.preventDefault();
-    if ((!input.trim() && !imageBase64) || isLoading) return;
+    const finalInput = overrideInput || input;
+    if ((!finalInput.trim() && !imageBase64) || isLoading) return;
 
-    const userMessage = input.trim();
-    setInput('');
+    triggerHaptic('tap');
+    const userMessage = finalInput.trim();
+    if (!overrideInput) setInput('');
     const currentBase64 = imageBase64;
     clearImage();
 
@@ -181,7 +209,10 @@ export default function Chatbot({ onMapCommand, isVisible = true }: { onMapComma
 
   const PlaceCard = ({ place, ...props }: { place: any, [key: string]: any }) => (
     <div 
-      onClick={() => onMapCommand?.('recenterMap', { lat: place.lat, lng: place.lng, zoom: 17, tilt: 45 })}
+      onClick={() => {
+        triggerHaptic('tap');
+        onMapCommand?.('recenterMap', { lat: place.lat, lng: place.lng, zoom: 17, tilt: 45 });
+      }}
       className="mt-2 p-3 glass border-white/10 hover:border-indigo-500/50 hover:bg-indigo-500/10 transition-all cursor-pointer group rounded-xl"
     >
       <div className="flex items-start justify-between gap-2">
@@ -201,20 +232,6 @@ export default function Chatbot({ onMapCommand, isVisible = true }: { onMapComma
 
   return (
     <>
-      {/* Floating Action Button - Positioned matching screenshot */}
-      <motion.button
-        whileHover={{ scale: 1.05 }}
-        whileTap={{ scale: 0.95 }}
-        onClick={() => setIsOpen(true)}
-        className={cn(
-          "absolute bottom-20 left-6 z-20 w-12 h-12 rounded-full flex items-center justify-center shadow-2xl transition-all border",
-          (isOpen || (!isVisible)) ? "opacity-0 pointer-events-none" : "opacity-100 bg-gradient-to-br from-indigo-500 to-purple-600 border-indigo-400 text-white",
-          !isVisible && "hidden md:flex"
-        )}
-      >
-        <Sparkles className="w-5 h-5 animate-pulse" />
-      </motion.button>
-
       {/* Chat Window */}
       <AnimatePresence>
         {isOpen && (
@@ -223,7 +240,7 @@ export default function Chatbot({ onMapCommand, isVisible = true }: { onMapComma
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 20, scale: 0.95 }}
             transition={{ type: "spring", stiffness: 300, damping: 25 }}
-            className="absolute bottom-6 left-6 md:left-auto md:right-[5.5rem] z-30 w-[calc(100%-3rem)] md:w-96 bg-[#14171d]/95 backdrop-blur-3xl border border-slate-700/50 rounded-2xl shadow-2xl overflow-hidden flex flex-col pointer-events-auto h-[500px] max-h-[70vh]"
+            className="absolute bottom-24 left-4 right-4 md:right-auto md:left-auto md:right-6 z-50 md:w-96 bg-[#14171d]/95 backdrop-blur-3xl border border-slate-700/50 rounded-2xl shadow-2xl overflow-hidden flex flex-col pointer-events-auto h-[500px] max-h-[60vh] md:max-h-[70vh]"
           >
             {/* Header */}
             <div className="p-3 md:p-4 border-b border-slate-800 bg-slate-900/40 flex items-center justify-between">
@@ -237,7 +254,10 @@ export default function Chatbot({ onMapCommand, isVisible = true }: { onMapComma
                 </div>
               </div>
               <button 
-                onClick={() => setIsOpen(false)}
+                onClick={() => {
+                  triggerHaptic('close');
+                  setIsOpen(false);
+                }}
                 className="w-10 h-10 flex items-center justify-center rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-all active:scale-90 bg-black/20"
               >
                 <X className="w-5 h-5 pointer-events-none" />
@@ -372,15 +392,27 @@ export default function Chatbot({ onMapCommand, isVisible = true }: { onMapComma
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
                     placeholder="Ask VANTi..."
-                    className="w-full bg-[#0a0c10] border border-slate-700/50 focus:border-indigo-500/50 text-white text-sm rounded-xl py-3 pl-4 pr-12 outline-none transition-all placeholder:text-slate-500"
+                    className="w-full bg-[#0a0c10] border border-slate-700/50 focus:border-indigo-500/50 text-white text-sm rounded-xl py-3 pl-4 pr-20 outline-none transition-all placeholder:text-slate-500"
                   />
-                  <button 
-                    type="submit"
-                    disabled={(!input.trim() && !imageBase64) || isLoading}
-                    className="absolute right-1 w-8 h-8 flex items-center justify-center rounded-lg bg-indigo-500/20 text-indigo-400 hover:bg-indigo-500 hover:text-white disabled:opacity-50 disabled:hover:bg-indigo-500/20 disabled:hover:text-indigo-400 transition-colors"
-                  >
-                    <Send className="w-4 h-4 ml-0.5" />
-                  </button>
+                  <div className="absolute right-1 flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => isListening ? stopListening() : startListening()}
+                      className={cn(
+                        "w-8 h-8 flex items-center justify-center rounded-lg transition-colors",
+                        isListening ? "bg-rose-500/20 text-rose-400" : "bg-slate-800 text-slate-400 hover:text-white"
+                      )}
+                    >
+                      {isListening ? <MicOff className="w-4 h-4 animate-pulse" /> : <Mic className="w-4 h-4" />}
+                    </button>
+                    <button 
+                      type="submit"
+                      disabled={(!input.trim() && !imageBase64) || isLoading}
+                      className="w-8 h-8 flex items-center justify-center rounded-lg bg-indigo-500/20 text-indigo-400 hover:bg-indigo-500 hover:text-white disabled:opacity-50 disabled:hover:bg-indigo-500/20 disabled:hover:text-indigo-400 transition-colors"
+                    >
+                      <Send className="w-4 h-4 ml-0.5" />
+                    </button>
+                  </div>
                 </div>
               </div>
             </form>

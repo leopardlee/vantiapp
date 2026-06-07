@@ -8,6 +8,8 @@ import {
   Users, UserPlus, ChevronLeft, Mail, CheckCircle2, Volume2, Vote, PlusCircle, BarChart3
 } from 'lucide-react';
 import { db, auth, loginWithGoogle } from '../lib/firebase';
+import { formatDate, formatDistance } from '../lib/formatters';
+import { useVantiStore } from '../store/vantiStore';
 import { 
   collection, doc, setDoc, deleteDoc, query, orderBy, onSnapshot, where
 } from 'firebase/firestore';
@@ -90,6 +92,7 @@ export default function TravelDiary({
   onRecenter: (lat: number, lng: number) => void;
   onClose?: () => void;
 }) {
+  const units = useVantiStore(state => state.units);
   const [feed, setFeed] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [text, setText] = useState('');
@@ -864,7 +867,7 @@ export default function TravelDiary({
                      </div>
                      <div className="text-[9px] text-slate-500 font-mono flex items-center gap-1.5 tracking-widest uppercase">
                        <Calendar className="w-3 h-3 text-slate-600" />
-                       {new Date(group.createdAt).toLocaleDateString()}
+                       {formatDate(group.createdAt, language)}
                      </div>
                    </div>
                  </motion.button>
@@ -1150,7 +1153,15 @@ export default function TravelDiary({
                         <p className="text-[10px] font-extrabold text-white truncate leading-none">{snap.userDisplayName}</p>
                         <div className="flex items-center gap-1.5 text-[8px] text-slate-500 uppercase font-mono mt-0.5">
                           <Calendar className="w-2.5 h-2.5" />
-                          <span>{new Date(snap.createdAt).toLocaleDateString()}</span>
+                          <span>{formatDate(snap.createdAt, language)}</span>
+                          {userLocation && snap.lat && snap.lng && (
+                            <>
+                              <span className="opacity-30">•</span>
+                              <span className="text-emerald-500/70 font-black">
+                                {formatDistance(getDistance(userLocation.lat, userLocation.lng, snap.lat, snap.lng) * 1000, units, language)}
+                              </span>
+                            </>
+                          )}
                         </div>
                       </div>
                     </div>
