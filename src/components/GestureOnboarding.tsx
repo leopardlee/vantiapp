@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Touchpad, Move3d, MousePointer2 } from 'lucide-react';
+import { Touchpad, Move3d, MousePointer2, Target, Mic } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 export function GestureOnboarding() {
@@ -16,7 +16,7 @@ export function GestureOnboarding() {
   }, []);
 
   const handleNext = () => {
-    if (step < 2) {
+    if (step < 4) {
       setStep(prev => prev + 1);
     } else {
       setIsVisible(false);
@@ -96,16 +96,42 @@ export function GestureOnboarding() {
               </>
             )}
 
+            {/* Step 4: Radial Menu */}
+            {step === 3 && (
+              <>
+                <div className="w-16 h-16 bg-indigo-500/20 text-indigo-400 rounded-full flex items-center justify-center mb-2">
+                  <Target className="w-8 h-8" />
+                </div>
+                <div className="space-y-1">
+                  <h3 className="text-white font-bold text-sm tracking-wide">Quick Actions</h3>
+                  <p className="text-xs text-slate-400">Long-press anywhere on the map to open the Quick Actions menu.</p>
+                </div>
+              </>
+            )}
+
+            {/* Step 5: Voice Search */}
+            {step === 4 && (
+              <>
+                <div className="w-16 h-16 bg-white/10 text-white rounded-full flex items-center justify-center mb-2">
+                  <Mic className="w-8 h-8" />
+                </div>
+                <div className="space-y-1">
+                  <h3 className="text-white font-bold text-sm tracking-wide">Voice Search</h3>
+                  <p className="text-xs text-slate-400">Tap the microphone to search locations quickly using your voice.</p>
+                </div>
+              </>
+            )}
+
             <button
               onClick={handleNext}
               className="mt-6 w-full py-3 bg-white text-black rounded-xl text-xs font-bold uppercase tracking-wider hover:bg-slate-200 transition-colors"
             >
-              {step < 2 ? "Got it" : "Start Exploring"}
+              {step < 4 ? "Got it" : "Start Exploring"}
             </button>
             
             {/* Progress Dots */}
             <div className="flex gap-2 justify-center pt-2">
-               {[0,1,2].map(i => (
+               {[0,1,2,3,4].map(i => (
                  <div key={i} className={cn("w-1.5 h-1.5 rounded-full transition-all", i === step ? "bg-white w-3" : "bg-white/20")} />
                ))}
             </div>

@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Camera, X, MapPin, Navigation, Compass, AlertCircle, Info } from 'lucide-react';
+import { Camera, MapPin, Navigation, Compass, AlertCircle, Info, Sparkles } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useVantiStore } from '../store/vantiStore';
+import { CloseButton } from './CloseButton';
 import { MockPlace, UserFriend } from '../data/mockPlaces';
 
 interface ARViewProps {
@@ -39,7 +40,12 @@ export default function ARView({ places, friends, userLocation, onClose, onSelec
   const [heading, setHeading] = useState<number>(0);
   const [tilt, setTilt] = useState<number>(0);
   const [arMarkers, setArMarkers] = useState<ARMarker[]>([]);
-  const { language } = useVantiStore();
+  const { language, addOverlay, removeOverlay } = useVantiStore();
+
+  useEffect(() => {
+    addOverlay('ar_view');
+    return () => removeOverlay('ar_view');
+  }, []);
 
   // 1. Initialize Camera
   useEffect(() => {
@@ -235,39 +241,74 @@ export default function ARView({ places, friends, userLocation, onClose, onSelec
              // Only render if within horizontal FOV
              if (m.x < -100 || m.x > window.innerWidth + 100) return null;
              
-             const scale = Math.max(0.6, 1 - (m.distance / 1500));
+              const scale = Math.max(0.6, 1 - (m.distance / 1500));
              const opacity = Math.max(0.2, 1 - (m.distance / 2000));
 
              return (
                <motion.div
                  key={m.id}
-                 initial={{ scale: 0, opacity: 0 }}
+                 initial={{ scale: 0, opacity: 0, filter: 'blur(20px)' }}
                  animate={{ 
                    left: m.x, 
                    top: m.y, 
                    scale, 
-                   opacity 
+                   opacity,
+                   filter: 'blur(0px)'
                  }}
-                 exit={{ scale: 0, opacity: 0 }}
-                 transition={{ type: "spring", stiffness: 100, damping: 20 }}
+                 exit={{ scale: 0, opacity: 0, filter: 'blur(10px)' }}
+                 transition={{ type: "spring", stiffness: 150, damping: 25 }}
                  className="absolute -translate-x-1/2 -translate-y-1/2 p-2 pointer-events-auto cursor-pointer"
                  onClick={() => onSelectPlace(m.item)}
                >
                  <div className="group flex flex-col items-center">
+                    {/* Gaussian Splat Simulation Particles */}
+                    <div className="absolute inset-0 -z-10 pointer-events-none overflow-hidden blur-sm">
+                        {[...Array(6)].map((_, i) => (
+                           <motion.div 
+                              key={i}
+                              animate={{ 
+                                x: [0, (Math.random() - 0.5) * 40, 0],
+                                y: [0, (Math.random() - 0.5) * 40, 0],
+                                opacity: [0.3, 0.6, 0.3]
+                              }}
+                              transition={{ 
+                                duration: 2 + Math.random() * 2, 
+                                repeat: Infinity,
+                                ease: "easeInOut"
+                              }}
+                              className="absolute w-2 h-2 bg-white/20 rounded-full"
+                              style={{ 
+                                left: `${50 + (Math.random() - 0.5) * 100}%`,
+                                top: `${50 + (Math.random() - 0.5) * 100}%`
+                              }}
+                           />
+                        ))}
+                    </div>
+
                     <div className={cn(
-                      "w-12 h-12 rounded-full border-2 border-white/80 shadow-2xl flex items-center justify-center transition-all group-hover:scale-125",
-                      m.type === 'friend' ? "bg-violet-600" : "bg-rose-500"
+                      "w-12 h-12 rounded-full border-2 border-white/80 shadow-[0_0_20px_rgba(255,255,255,0.4)] flex items-center justify-center transition-all group-hover:scale-125 bg-black/60 backdrop-blur-3xl",
+                      m.type === 'friend' ? "ring-2 ring-violet-500/50" : "ring-2 ring-rose-500/50"
                     )}>
                       {m.type === 'friend' ? (
                         <img src={m.item.avatar} className="w-full h-full rounded-full object-cover" />
                       ) : (
-                        <MapPin className="w-6 h-6 text-white" />
+                        <div className="relative">
+                           <MapPin className="w-6 h-6 text-white" />
+                           <motion.div 
+                              animate={{ scale: [1, 1.5, 1], opacity: [0.5, 0, 0.5] }}
+                              transition={{ duration: 2, repeat: Infinity }}
+                              className="absolute inset-0 bg-white rounded-full -z-10"
+                           />
+                        </div>
                       )}
                     </div>
                     
-                    <div className="mt-2 bg-black/60 backdrop-blur-md border border-white/20 px-3 py-1.5 rounded-xl whitespace-nowrap">
-                       <p className="text-[10px] font-black text-white uppercase tracking-tighter">{m.name}</p>
-                       <div className="flex items-center gap-1 mt-0.5">
+                    <div className="mt-2 bg-black/60 backdrop-blur-3xl border border-white/20 px-3 py-1.5 rounded-xl whitespace-nowrap shadow-2xl">
+                       <div className="flex items-center gap-1.5 mb-1">
+                          <Sparkles className="w-3 h-3 text-cyan-400" />
+                          <p className="text-[10px] font-black text-white uppercase tracking-tighter">{m.name}</p>
+                       </div>
+                       <div className="flex items-center gap-1 mt-0.5 border-t border-white/10 pt-1">
                           <Navigation className="w-2.5 h-2.5 text-cyan-400 rotate-45" />
                           <span className="text-[9px] font-mono font-bold text-white/70">
                             {m.distance > 1000 ? `${(m.distance / 1000).toFixed(1)}km` : `${Math.round(m.distance)}m`}
@@ -275,8 +316,8 @@ export default function ARView({ places, friends, userLocation, onClose, onSelec
                        </div>
                     </div>
                     
-                    {/* Perspective Line */}
-                    <div className="w-[1px] h-12 bg-gradient-to-t from-white/40 to-transparent mt-1" />
+                    {/* Gaussian Gradient Tail */}
+                    <div className="w-[2px] h-16 bg-gradient-to-t from-white/60 via-white/20 to-transparent mt-1" />
                  </div>
                </motion.div>
              );
@@ -287,24 +328,24 @@ export default function ARView({ places, friends, userLocation, onClose, onSelec
       {/* Top Header */}
       <div className="absolute top-0 left-0 w-full p-6 flex items-center justify-between pointer-events-none">
         <div className="flex items-center gap-4">
-           <div className="w-12 h-12 rounded-2xl bg-white/10 backdrop-blur-xl border border-white/10 flex items-center justify-center">
+           <div className="w-12 h-12 rounded-2xl bg-white/10 backdrop-blur-xl border border-white/10 flex items-center justify-center relative overflow-hidden">
               <Camera className="w-6 h-6 text-white" />
+              <motion.div 
+                 animate={{ opacity: [0, 0.5, 0], x: ['-100%', '100%'] }}
+                 transition={{ duration: 1.5, repeat: Infinity }}
+                 className="absolute inset-0 bg-white/20 -skew-x-12"
+              />
            </div>
            <div>
-              <h1 className="text-white font-black text-lg tracking-tighter leading-none">AR VISION</h1>
-              <p className="text-cyan-400 text-[10px] font-mono mt-1 uppercase tracking-widest flex items-center gap-2">
-                 <span className="w-1.5 h-1.5 bg-cyan-400 rounded-full animate-pulse" />
-                 Active Location Feed
+              <h1 className="text-white font-black text-lg tracking-tighter leading-none">GAUSSIAN VISION</h1>
+              <p className="text-white/40 text-[10px] font-mono mt-1 uppercase tracking-widest flex items-center gap-2">
+                 <span className="w-1.5 h-1.5 bg-green-500 rounded-full shadow-[0_0_8px_rgba(34,197,94,0.5)]" />
+                 Neural Reconstruction Active
               </p>
            </div>
         </div>
 
-        <button 
-          onClick={onClose}
-          className="w-12 h-12 rounded-2xl bg-white/10 backdrop-blur-xl border border-white/10 flex items-center justify-center pointer-events-auto hover:bg-white/20 transition-all active:scale-95"
-        >
-          <X className="w-6 h-6 text-white" />
-        </button>
+        <CloseButton onClick={onClose} isAbsolute={false} className="border-white/10 scale-125" />
       </div>
 
       {/* Compass / Orientation Stats HUD */}

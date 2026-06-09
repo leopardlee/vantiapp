@@ -79,6 +79,42 @@
       },
       "required": ["stops", "updatedAt"]
     },
+    "MemoryTrailPin": {
+      "title": "MemoryTrailPin",
+      "description": "A past location pin from the 24-hour memory trail",
+      "type": "object",
+      "properties": {
+        "lat": { "type": "number" },
+        "lng": { "type": "number" },
+        "timestamp": { "type": "number" }
+      },
+      "required": ["lat", "lng", "timestamp"]
+    },
+    "PassportStamp": {
+      "title": "PassportStamp",
+      "description": "A digital stamp collected by visiting a landmark",
+      "type": "object",
+      "properties": {
+        "landmarkId": { "type": "string" },
+        "name": { "type": "string" },
+        "timestamp": { "type": "number" }
+      },
+      "required": ["landmarkId", "name", "timestamp"]
+    },
+    "AtmosphereMood": {
+      "title": "AtmosphereMood",
+      "description": "Short location-tagged mood/vibe dropped by a user",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "emoji": { "type": "string" },
+        "text": { "type": "string" },
+        "lat": { "type": "number" },
+        "lng": { "type": "number" },
+        "timestamp": { "type": "number" }
+      },
+      "required": ["userId", "text", "lat", "lng", "timestamp"]
+    },
     "UserLocation": {
       "title": "UserLocation",
       "description": "Real-time location coordinates for a user",
@@ -92,6 +128,31 @@
         "updatedAt": { "type": "number" }
       },
       "required": ["uid", "lat", "lng", "updatedAt"]
+    },
+    "GroupTrip": {
+      "title": "GroupTrip",
+      "description": "A collaborative trip shared among multiple users",
+      "type": "object",
+      "properties": {
+        "ownerId": { "type": "string" },
+        "name": { "type": "string" },
+        "participantEmails": { "type": "array", "items": { "type": "string" } },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["ownerId", "name", "participantEmails", "createdAt"]
+    },
+    "Poll": {
+      "title": "Poll",
+      "description": "A group decision poll within a trip",
+      "type": "object",
+      "properties": {
+        "question": { "type": "string" },
+        "options": { "type": "array", "items": { "type": "string" } },
+        "votes": { "type": "object", "additionalProperties": { "type": "number" } },
+        "createdBy": { "type": "string" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["question", "options", "votes", "createdBy", "createdAt"]
     }
   },
   "firestore": {
@@ -111,9 +172,21 @@
       "schema": { "$ref": "ChatMessage" },
       "description": "User's chat history with Gemini"
     },
+    "users/{userId}/memoryTrail/{pinId}": {
+      "schema": { "$ref": "MemoryTrailPin" },
+      "description": "User's location pins for the Memory Trail"
+    },
     "users/{userId}/recentSearches/{searchId}": {
       "schema": { "$ref": "RecentSearch" },
       "description": "User's recent location search queries"
+    },
+    "users/{userId}/passportStamps/{stampId}": {
+      "schema": { "$ref": "PassportStamp" },
+      "description": "User's collected digital passport stamps"
+    },
+    "atmosphereMoods/{moodId}": {
+      "schema": { "$ref": "AtmosphereMood" },
+      "description": "Global feed of short location moods"
     },
     "travelSnapshots/{snapshotId}": {
       "schema": { "$ref": "TravelSnapshot" },
@@ -122,6 +195,22 @@
     "userLocations/{userId}": {
       "schema": { "$ref": "UserLocation" },
       "description": "Real-time user locations for social features"
+    },
+    "groupTrips/{tripId}": {
+      "schema": { "$ref": "GroupTrip" },
+      "description": "Shared group trip documents"
+    },
+    "groupTrips/{tripId}/snapshots/{snapshotId}": {
+      "schema": { "$ref": "TravelSnapshot" },
+      "description": "Snapshots specific to a group trip"
+    },
+    "groupTrips/{tripId}/polls/{pollId}": {
+      "schema": { "$ref": "Poll" },
+      "description": "Interactive polls within a group trip"
+    },
+    "_vanti_health/{id}": {
+      "schema": { "type": "object", "properties": {} },
+      "description": "System health check collection"
     }
   }
 }

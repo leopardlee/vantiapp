@@ -1,15 +1,16 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo, Component, ReactNode } from 'react';
 import SunCalc from 'suncalc';
+import throttle from 'lodash/throttle';
 import { Map, AdvancedMarker, useMap, useMapsLibrary, Map3D, MapMode, GestureHandling, Map3DRef, Marker3D } from '@vis.gl/react-google-maps';
 import { MarkerClusterer } from '@googlemaps/markerclusterer';
 import { 
-  Search, MapPin, Navigation, List, X, Loader2, LogIn, LogOut, Box, Globe, Star,
-  Bookmark, Users, Sparkles, Tag, User, Layers, LocateFixed, Eye, EyeOff, Ticket, History, Landmark,
-  HelpCircle, ChevronRight, Award, Wallet, Info, Camera, Video, BookOpen,
+  Search, MapPin, Navigation, List, X, Loader2, LogIn, LogOut, Box, Globe, Star, Cpu,
+  Bookmark, Users, Sparkles, Tag, User, Layers, LocateFixed, Eye, EyeOff, Ticket, History, Landmark, Palette,
+  HelpCircle, ChevronRight, Award, Wallet, Info, Camera, Video, BookOpen, Plane,
   Plus, Minus, Mountain, Download, Radar as RadarIcon, Settings, Map as MapIcon, TrendingUp,
   Check, CheckSquare, Square, Wifi, Battery, Flame, Activity, ShieldAlert, Lock, Unlock,
   Compass, Coffee, Utensils, Cloud, Sun, CloudRain, Snowflake, AlertCircle, Heart, Crosshair, Mic, Trash2, Zap, LayoutGrid, Calendar, Edit2, Check as CheckIcon,
-  Wind
+  Wind, SlidersHorizontal
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
@@ -17,17 +18,24 @@ import { getEmojiForPlace } from '../lib/placeIcons';
 import { MapMarkerIcon, getIconForType } from './MapMarkerIcon';
 import FocusLock from 'react-focus-lock';
 import PlaceDetailsPanel from './PlaceDetailsPanel';
+import { StatusIndicator } from './StatusIndicator';
 import { LandmarkMarker } from './LandmarkMarker';
 import { CommunityActivityLayer } from './CommunityActivityLayer';
 import { SafeAdvancedMarker, MapErrorBoundary } from './SafeAdvancedMarker';
 import RouteDisplay from './RouteDisplay';
 import ItineraryLegsDisplay from './ItineraryLegsDisplay';
 import RoutePlannerPanel from './RoutePlannerPanel';
+import { MemoryTrailLayer } from './MemoryTrailLayer';
+import { MemoryReplayViewer } from './MemoryReplayViewer';
+import { AtmosphereD3Overlay } from './AtmosphereD3Overlay';
 import Chatbot from './Chatbot';
 import InfoBubble from './InfoBubble';
+import { MapRadialMenu } from './MapRadialMenu';
+import { useLongPress } from '../hooks/useLongPress';
 import SpeedometerWidget from './SpeedometerWidget';
 import MobileControlDrawer from './MobileControlDrawer';
 import WeatherEffects from './WeatherEffects';
+import { FloatingRadarWidget } from './FloatingRadarWidget';
 import SoundEngine from './SoundEngine';
 import { AnalyticsDashboard } from './AnalyticsDashboard';
 import { Skeleton, SkeletonCircle, SkeletonText } from './common/Skeleton';
@@ -50,6 +58,12 @@ import { usePerformanceMonitor } from '../hooks/usePerformanceMonitor';
 import { useSocialLocation } from '../hooks/useSocialLocation';
 import { BookmarksLayer } from './BookmarksLayer';
 import { PlacesAutocompleteInput } from './PlacesAutocompleteInput';
+import { DestinationPickerModal } from './DestinationPickerModal';
+import { useThemeManager } from '../hooks/useThemeManager';
+import { DestinationBriefingModal } from './DestinationBriefingModal';
+import { useBreadcrumb } from '../hooks/useBreadcrumb';
+import { useLocalSuggestions } from '../hooks/useLocalSuggestions';
+import { BreadcrumbLayer } from './BreadcrumbLayer';
 
 import { MINIMALIST_STYLE, TERRAIN_FOCUSED_STYLE, HIGH_CONTRAST_STYLE } from '../lib/mapStyles';
 import { auth, loginWithGoogle, logout, db } from '../lib/firebase';
@@ -519,43 +533,8 @@ const AtmosphericOverlay = React.memo(({ weather }: { weather: any }) => {
   if (condition === "Clouds") {
     return (
       <div className="absolute inset-0 pointer-events-none overflow-hidden z-[10] select-none">
-        {/* Moody soft overcast tone */}
-        <div className="absolute inset-0 bg-slate-900/10 shadow-[inset_0_0_80px_rgba(15,23,42,0.4)]" />
-
-        {/* Drifting Large Clouds */}
-        <motion.div
-          initial={{ x: "-100%", y: "15%", opacity: 0 }}
-          animate={{ x: "110%", opacity: [0, 0.25, 0.25, 0] }}
-          transition={{
-            repeat: Infinity,
-            duration: 110,
-            ease: "linear"
-          }}
-          className="absolute w-[450px] h-[180px] bg-white rounded-full filter blur-[55px]"
-        />
-
-        <motion.div
-          initial={{ x: "110%", y: "45%", opacity: 0 }}
-          animate={{ x: "-100%", opacity: [0, 0.18, 0.18, 0] }}
-          transition={{
-            repeat: Infinity,
-            duration: 150,
-            ease: "linear"
-          }}
-          className="absolute w-[550px] h-[220px] bg-slate-200 rounded-full filter blur-[65px]"
-        />
-
-        <motion.div
-          initial={{ x: "-100%", y: "65%", opacity: 0 }}
-          animate={{ x: "110%", opacity: [0, 0.2, 0.2, 0] }}
-          transition={{
-            repeat: Infinity,
-            duration: 130,
-            ease: "linear",
-            delay: 20
-          }}
-          className="absolute w-[380px] h-[150px] bg-zinc-300 rounded-full filter blur-[50px]"
-        />
+        {/* Moody soft overcast tone - minimal impact */}
+        <div className="absolute inset-0 bg-slate-900/5" />
       </div>
     );
   }
@@ -583,7 +562,7 @@ const AtmosphericOverlay = React.memo(({ weather }: { weather: any }) => {
               delay: Math.random() * 5,
               ease: "linear"
             }}
-            className="absolute rounded-full bg-white flex items-center justify-center filter blur-[0.5px]"
+            className="absolute rounded-full bg-white flex items-center justify-center"
             style={{
               width: `${2 + Math.random() * 4}px`,
               height: `${2 + Math.random() * 4}px`,
@@ -594,27 +573,11 @@ const AtmosphericOverlay = React.memo(({ weather }: { weather: any }) => {
     );
   }
 
-  // "Clear" or "Sun" Condition: Render beautiful golden sun glare in top-right of map view
+  // "Clear" or "Sun" Condition: Clean view
   return (
     <div className="absolute inset-0 pointer-events-none overflow-hidden z-[10] select-none mix-blend-screen opacity-95">
-      {/* Warm map wide golden filter */}
-      <div className="absolute inset-0 bg-amber-500/[0.015]" />
-      
-      {/* Solar Glare / Sunbeams */}
-      <motion.div 
-        animate={{ 
-          scale: [0.95, 1.05, 0.95],
-          opacity: [0.65, 0.85, 0.65]
-        }}
-        transition={{
-          duration: 8,
-          repeat: Infinity,
-          ease: "easeInOut"
-        }}
-        className="absolute -top-48 -right-48 w-[650px] h-[650px] rounded-full bg-gradient-to-br from-amber-400/25 via-orange-500/5 to-transparent filter blur-[90px]"
-      />
-      <div className="absolute top-12 right-24 w-1 h-[400px] bg-gradient-to-b from-amber-200/10 via-amber-400/[0.01] to-transparent rotate-45 origin-top filter blur-[4px]" />
-      <div className="absolute top-12 right-24 w-2 h-[450px] bg-gradient-to-b from-amber-300/15 via-orange-400/[0.01] to-transparent rotate-30 origin-top filter blur-[6px]" />
+      {/* Very subtle warm map wide golden filter */}
+      <div className="absolute inset-0 bg-amber-500/[0.005]" />
     </div>
   );
 });
@@ -1006,6 +969,7 @@ import { FinancialTelemetry } from './FinancialTelemetry';
 import AILogPanel from './AILogPanel';
 
 const VantiMap = React.memo(function VantiMap() {
+  const { timePhase } = useThemeManager();
   const map = useMap();
   const { stats: prefStats, markLoaded } = usePerformanceMonitor();
   const map3dRef = useRef<Map3DRef>(null);
@@ -1017,6 +981,8 @@ const VantiMap = React.memo(function VantiMap() {
   const setActiveMode = useVantiStore((state) => state.setActiveMode);
   const mapTheme = useVantiStore((state) => state.mapTheme);
   const setMapTheme = useVantiStore((state) => state.setMapTheme);
+  const setMapViewport = useVantiStore((state) => state.setMapViewport);
+  const setGlobalViewportLandmarks = useVantiStore((state) => state.setViewportLandmarks);
   const showList = useVantiStore((state) => state.showList);
   const setShowList = useVantiStore((state) => state.setShowList);
   const selectedPlace = useVantiStore((state) => state.selectedPlace);
@@ -1038,8 +1004,18 @@ const VantiMap = React.memo(function VantiMap() {
   const [addingMarkerNote, setAddingMarkerNote] = useState('');
   const [addingMarkerCategory, setAddingMarkerCategory] = useState('Restaurant');
   const [showToast, setShowToast] = useState(false);
+  const [userLocation, setUserLocation] = useState<google.maps.LatLngLiteral | null>(DEFAULT_CENTER);
+  const trail = useBreadcrumb(true);
+  const suggestion = useLocalSuggestions(userLocation?.lat, userLocation?.lng);
+
+  useEffect(() => {
+    if (suggestion) {
+      addToast(`Must-Do Nearby: ${suggestion.name}`, 'info');
+    }
+  }, [suggestion]);
 
   const showControls = useVantiStore((state) => state.showControls);
+  const isBatterySaverEnabled = useVantiStore((state) => state.isBatterySaverEnabled);
   const setShowControls = useVantiStore((state) => state.setShowControls);
   const themeOverride = useVantiStore((state) => state.themeOverride);
   const setThemeOverride = useVantiStore((state) => state.setThemeOverride);
@@ -1051,6 +1027,10 @@ const VantiMap = React.memo(function VantiMap() {
 
   const isAROpen = useVantiStore((state) => state.isAROpen);
   const setIsAROpen = useVantiStore((state) => state.setIsAROpen);
+  const isAtmosphereOpen = useVantiStore((state) => state.isAtmosphereOpen);
+  const setIsAtmosphereOpen = useVantiStore((state) => state.setIsAtmosphereOpen);
+  const isOperationsHubOpen = useVantiStore((state) => state.isOperationsHubOpen);
+  const setIsOperationsHubOpen = useVantiStore((state) => state.setIsOperationsHubOpen);
   const units = useVantiStore((state) => state.units);
   const setUnits = useVantiStore((state) => state.setUnits);
   const mapStyle = useVantiStore((state) => state.mapStyle);
@@ -1073,14 +1053,81 @@ const VantiMap = React.memo(function VantiMap() {
 
   const t = getTranslation(language);
 
-  const [is3DActive, setIs3DActive] = useState(false);
+  const is3DActive = useVantiStore((state) => state.is3DActive);
+  const setIs3DActive = useVantiStore((state) => state.setIs3DActive);
+  const isGaussianActive = useVantiStore((state) => state.isGaussianActive);
+  const setIsGaussianActive = useVantiStore((state) => state.setIsGaussianActive);
   const [isMapIdle, setIsMapIdle] = useState(false);
   const [expandedClusterId, setExpandedClusterId] = useState<string | null>(null);
   const [hoveredClusterId, setHoveredClusterId] = useState<string | null>(null);
   const [isCreateMenuOpen, setIsCreateMenuOpen] = useState(false);
   const [showLayersMenu, setShowLayersMenu] = useState(false);
+  const [showVectorGuide, setShowVectorGuide] = useState(false);
+  const [showDestinationPicker, setShowDestinationPicker] = useState(false);
+  const [selectedCityForBriefing, setSelectedCityForBriefing] = useState<any | null>(null);
+  const [radialMenu, setRadialMenu] = useState<{ isOpen: boolean; position: { x: number; y: number }; place: any } | null>(null);
+
+  const handleMapLongPress = useCallback((e: any) => {
+    const x = e.pageX || (e.touches && e.touches[0].pageX);
+    const y = e.pageY || (e.touches && e.touches[0].pageY);
+    if (x && y) {
+      setRadialMenu({
+        isOpen: true,
+        position: { x, y },
+        place: { name: 'Picked Location' }
+      });
+      console.log("Long press on map");
+    }
+  }, []);
+
+  const longPressHandlers = useLongPress(handleMapLongPress, { threshold: 800 });
+
+  const stats = useVantiStore((state) => state.tripStats);
+  const addVisitedLandmark = useVantiStore((state) => state.addVisitedLandmark);
+  const updateTotalDistance = useVantiStore((state) => state.updateTotalDistance);
+  const recordWeatherPreference = useVantiStore((state) => state.recordWeatherPreference);
+
+  const handleMarkerLongPress = useCallback((e: any, place: any) => {
+    if (e.detail?.domEvent) {
+      setRadialMenu({
+        isOpen: true,
+        position: { x: e.detail.domEvent.clientX, y: e.detail.domEvent.clientY },
+        place
+      });
+      triggerHaptic('impact');
+    } else if (e.clientX && e.clientY) {
+      setRadialMenu({
+        isOpen: true,
+        position: { x: e.clientX, y: e.clientY },
+        place
+      });
+      triggerHaptic('impact');
+    }
+  }, []);
+
   const [viewportLandmarks, setViewportLandmarks] = useState<any[]>([]);
+
   const [activeFilter, setActiveFilter] = useState<'all' | 'recent' | 'landmarks' | 'budget'>('all');
+
+  // Track total distance by measuring movement between userLocation updates
+  const lastTrackedLocRef = useRef<{ lat: number, lng: number } | null>(null);
+  useEffect(() => {
+    if (userLocation && geometryLib) {
+      if (lastTrackedLocRef.current) {
+        const dist = geometryLib.spherical.computeDistanceBetween(
+          lastTrackedLocRef.current,
+          userLocation
+        );
+        // Only record if moved more than 50 meters to avoid jitter
+        if (dist > 50) {
+          updateTotalDistance(dist / 1000); // km
+          lastTrackedLocRef.current = userLocation;
+        }
+      } else {
+        lastTrackedLocRef.current = userLocation;
+      }
+    }
+  }, [userLocation, geometryLib, updateTotalDistance]);
 
   // Landmark Extraction Logic
   useEffect(() => {
@@ -1104,12 +1151,14 @@ const VantiMap = React.memo(function VantiMap() {
         });
 
         if (places) {
-          setViewportLandmarks(places.map((p: any) => ({
+          const mapped = places.map((p: any) => ({
             id: p.id,
             name: p.displayName,
             position: { lat: p.location.lat(), lng: p.location.lng() },
             types: p.types
-          })));
+          }));
+          setViewportLandmarks(mapped);
+          setGlobalViewportLandmarks(mapped); // global store sync
         }
       } catch (err) {
         console.warn("Landmark viewport scan failed:", err);
@@ -1120,13 +1169,22 @@ const VantiMap = React.memo(function VantiMap() {
   }, [map, placesLib, isMapIdle, isAROpen]);
 
   useEffect(() => {
+    // Safety fallback: Ensure initialization screen hides even if map libraries fail
+    const fallbackTimer = setTimeout(() => {
+      setIsInitializing(false);
+    }, 4000);
+
     if (map && placesLib && markerLib && geometryLib) {
       markLoaded();
       const timer = setTimeout(() => {
         setIsInitializing(false);
-      }, 1800); // 1.8-second telemetry calibration sequence
-      return () => clearTimeout(timer);
+      }, 1200); 
+      return () => {
+        clearTimeout(timer);
+        clearTimeout(fallbackTimer);
+      };
     }
+    return () => clearTimeout(fallbackTimer);
   }, [map, placesLib, markerLib, geometryLib, setIsInitializing]);
 
   useEffect(() => {
@@ -1174,7 +1232,6 @@ const VantiMap = React.memo(function VantiMap() {
   const [savedPlaces, setSavedPlaces] = useState<any[]>([]);
   const [showingSaved, setShowingSaved] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
-  const [userLocation, setUserLocation] = useState<google.maps.LatLngLiteral | null>(DEFAULT_CENTER);
 
   const routeOrigin = useMemo(() => {
     if (routingOrigin) {
@@ -1378,6 +1435,17 @@ const VantiMap = React.memo(function VantiMap() {
     const updateSolarTheme = () => {
       const now = new Date();
       const times = SunCalc.getTimes(now, userLocation.lat, userLocation.lng);
+      const sunPos = SunCalc.getPosition(now, userLocation.lat, userLocation.lng);
+      
+      // Update global CSS lighting variables based on actual sun position
+      // Convert azimuth from radians (-PI to PI) to degrees
+      const azimuthDeg = sunPos.azimuth * (180 / Math.PI) + 180; 
+      // Altitude from 0 to PI/2
+      const altitudeDeg = sunPos.altitude * (180 / Math.PI);
+      
+      document.documentElement.style.setProperty('--sun-azimuth', `${azimuthDeg}deg`);
+      document.documentElement.style.setProperty('--sun-altitude', `${altitudeDeg}deg`);
+      document.documentElement.style.setProperty('--sun-intensity', Math.max(0, Math.min(1, altitudeDeg / 90)).toFixed(2));
       
       const isNight = now < times.sunrise || now > times.sunset;
       const targetAesthetic: MapAesthetic = isNight ? 'midnight-cyberpunk' : 'none';
@@ -1389,7 +1457,7 @@ const VantiMap = React.memo(function VantiMap() {
     };
 
     updateSolarTheme();
-    const interval = setInterval(updateSolarTheme, 300000); // Check every 5 minutes
+    const interval = setInterval(updateSolarTheme, 60000); // Check every minute
     return () => clearInterval(interval);
   }, [userLocation, themeOverride, mapAesthetic, setMapAesthetic, triggerHaptic]);
 
@@ -1628,8 +1696,10 @@ const VantiMap = React.memo(function VantiMap() {
   // Nearby Highlights Summary Card state and logic
   const [nearbyHighlights, setNearbyHighlights] = useState<any[]>([]);
   const [loadingHighlights, setLoadingHighlights] = useState(false);
+  const highlightsCache = useRef<Record<string, any>>({});
   const [isHighlightsExpanded, setIsHighlightsExpanded] = useState(false);
   const [isDiscoverMode, setIsDiscoverMode] = useState(false);
+  const [showRadar, setShowRadar] = useState(false);
   const [showTravelInsights, setShowTravelInsights] = useState(false);
   const [activeMarkerFilters, setActiveMarkerFilters] = useState<string[]>(['all']);
   const [toasts, setToasts] = useState<{ id: string; message: string; type: 'success' | 'info' | 'error' }[]>([]);
@@ -1658,10 +1728,19 @@ const VantiMap = React.memo(function VantiMap() {
 
   const fetchHighlightsForCenter = async () => {
     if (!map || !placesLib || !isDiscoverMode) return;
+    
+    // Simple coordinate-based cache key
+    const key = `${Math.round(debouncedCenter.lat * 1000)}_${Math.round(debouncedCenter.lng * 1000)}`;
+    if (highlightsCache.current[key]) {
+      setNearbyHighlights(highlightsCache.current[key]);
+      return;
+    }
+
     setLoadingHighlights(true);
     setNearbyHighlights([]);
     try {
       const spots = await fetchNearbyHighlights(debouncedCenter, placesLib, map);
+      highlightsCache.current[key] = spots;
       setNearbyHighlights(spots);
     } catch (err) {
       console.warn("Failed to load nearby highlights:", err);
@@ -1760,6 +1839,7 @@ const VantiMap = React.memo(function VantiMap() {
   const [editingAreaName, setEditingAreaName] = useState('');
   const [showStyleSwitcher, setShowStyleSwitcher] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+  const [isMobileFilterOpen, setIsMobileFilterOpen] = useState(false);
   const [lastFlyoverId, setLastFlyoverId] = useState<string | null>(null);
   const [showSpeedometer, setShowSpeedometer] = useState(true);
   const [showWeatherOverlay, setShowWeatherOverlay] = useState(true);
@@ -1772,22 +1852,77 @@ const VantiMap = React.memo(function VantiMap() {
   const triggerFlyover = useCallback((place: any) => {
     if (is3DActive && map3dRef.current) {
         const m3d = map3dRef.current as any;
-        m3d.flyTo({
-            center: { lat: place.lat, lng: place.lng, altitude: 400 },
-            tilt: 65,
-            heading: (mapHeading + (Math.random() > 0.5 ? 45 : -45)) % 360,
-            range: 1000,
+        m3d.flyCameraTo({
+            endCamera: {
+              center: { lat: place.lat, lng: place.lng, altitude: 400 },
+              tilt: 65,
+              heading: (mapHeading + (Math.random() > 0.5 ? 45 : -45)) % 360,
+              range: 1000
+            },
             durationMillis: 2500
         });
     } else if (map) {
-        map.moveCamera({
-            center: { lat: place.lat, lng: place.lng },
-            tilt: 55,
-            heading: (mapHeading + 30) % 360,
-            zoom: 18
-        });
+        map.panTo({ lat: place.lat, lng: place.lng });
+        map.setZoom(18);
     }
   }, [is3DActive, map, mapHeading]);
+
+  // FLYTHROUGH MODE: Smooth transition sequence between scenic points
+  useEffect(() => {
+    let timeoutId: any;
+    let active = true;
+    
+    if (activeMode === 'flythrough') {
+      if (!is3DActive) {
+        setIs3DActive(true); // Force 3D mode for better flythrough experience
+      }
+      
+      const scenicPoints = [
+        { lat: 48.8584, lng: 2.2945, name: 'Eiffel Tower' },
+        { lat: 35.6586, lng: 139.7454, name: 'Tokyo Tower' },
+        { lat: 40.6892, lng: -74.0445, name: 'Statue of Liberty' },
+        { lat: -33.8568, lng: 151.2153, name: 'Sydney Opera House' },
+        { lat: 51.5033, lng: -0.1196, name: 'London Eye' },
+        { lat: 25.0973, lng: 55.1520, name: 'Palm Jumeirah' },
+        { lat: -22.9519, lng: -43.2105, name: 'Christ the Redeemer' }
+      ];
+      
+      let currentIndex = 0;
+      
+      const nextFlypoint = async () => {
+        if (!active || activeMode !== 'flythrough') return;
+        
+        const pt = scenicPoints[currentIndex];
+        
+        if (map3dRef.current) {
+          const m3d = map3dRef.current as any;
+          // Easing-based transition
+          m3d.flyCameraTo({
+            endCamera: {
+              center: { lat: pt.lat, lng: pt.lng, altitude: 500 },
+              tilt: 60,
+              heading: Math.random() * 360,
+              range: 1200
+            },
+            durationMillis: 15000 // Very slow, cinematic
+          });
+        }
+        
+        currentIndex = (currentIndex + 1) % scenicPoints.length;
+        
+        // Schedule next transition well after this one ends, allowing a pause
+        timeoutId = setTimeout(nextFlypoint, 22000);
+      };
+      
+      // Start immediately
+      nextFlypoint();
+    }
+    
+    return () => {
+      active = false;
+      clearTimeout(timeoutId);
+    };
+  }, [activeMode, is3DActive]);
 
 
   // Automated theme switcher based on local time
@@ -1857,6 +1992,26 @@ const VantiMap = React.memo(function VantiMap() {
       { featureType: 'poi', elementType: 'labels.text.fill', stylers: [{ opacity: 0.2 }] },
       { featureType: 'poi', elementType: 'labels.icon', stylers: [{ opacity: 0.2 }] },
       { featureType: 'road', elementType: 'labels.text.fill', stylers: [{ opacity: 0.2 }] }
+    ],
+    'Day': [
+      { elementType: 'geometry', stylers: [{ color: '#ebe6dd' }] },
+      { elementType: 'labels.text.stroke', stylers: [{ color: '#fcfcfc' }] },
+      { elementType: 'labels.text.fill', stylers: [{ color: '#444444' }] },
+      { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#aadaff' }] }
+    ],
+    'Dawn': [
+      { elementType: 'geometry', stylers: [{ color: '#f5e8e4' }] },
+      { elementType: 'labels.text.stroke', stylers: [{ color: '#fcfcfc' }] },
+      { elementType: 'labels.text.fill', stylers: [{ color: '#685966' }] },
+      { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#fee7d1' }] },
+      { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#dcd1f3' }] }
+    ],
+    'Dusk': [
+      { elementType: 'geometry', stylers: [{ color: '#382a47' }] },
+      { elementType: 'labels.text.stroke', stylers: [{ color: '#271932' }] },
+      { elementType: 'labels.text.fill', stylers: [{ color: '#b9a5c4' }] },
+      { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#4f3a61' }] },
+      { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#1a1025' }] }
     ],
     'Night': [
       { elementType: 'geometry', stylers: [{ color: '#1a1c23' }] },
@@ -2042,9 +2197,7 @@ const VantiMap = React.memo(function VantiMap() {
 
   // Fetch trending destinations based on time and weather
   useEffect(() => {
-    if (!map) return;
-    const center = map.getCenter()?.toJSON();
-    if (!center) return;
+    if (!debouncedCenter || !isDiscoverMode) return;
 
     const fetchTrending = async () => {
       try {
@@ -2055,7 +2208,7 @@ const VantiMap = React.memo(function VantiMap() {
           body: JSON.stringify({
             localTime,
             weather: activeWeather,
-            locationContext: center,
+            locationContext: debouncedCenter,
             searchHistory: user ? recentSearches.map(r => r.query) : localRecentSearches
           })
         });
@@ -2068,9 +2221,8 @@ const VantiMap = React.memo(function VantiMap() {
       }
     };
 
-    const timer = setTimeout(fetchTrending, 2000); // Debounce to allow weather and center to stabilize
-    return () => clearTimeout(timer);
-  }, [map, activeWeather, user, recentSearches, localRecentSearches, setTrendingDestinations]);
+    fetchTrending();
+  }, [debouncedCenter, activeWeather, user, recentSearches, localRecentSearches, setTrendingDestinations, isDiscoverMode]);
 
   useEffect(() => {
     if (activeMode === 'profile') {
@@ -2083,6 +2235,19 @@ const VantiMap = React.memo(function VantiMap() {
     const listener = map.addListener('idle', () => {
       const center = map.getCenter()?.toJSON();
       if (center) {
+        const b = map.getBounds();
+        const bJSON = b ? {
+          north: b.getNorthEast().lat(),
+          south: b.getSouthWest().lat(),
+          east: b.getNorthEast().lng(),
+          west: b.getSouthWest().lng()
+        } : null;
+        setMapViewport({
+          center,
+          bounds: bJSON,
+          zoom: map.getZoom() || 12
+        });
+
         // Only trigger side effects that aren't handling internal map sync
         setPopularSearches([
           `Trending in ${Math.round(center.lat * 1000) / 1000}, ${Math.round(center.lng * 1000) / 1000}`,
@@ -2178,6 +2343,8 @@ const VantiMap = React.memo(function VantiMap() {
       const sp: any[] = [];
       snapshot.forEach(doc => sp.push({ id: doc.id, ...doc.data() }));
       setSavedPlaces(sp);
+    }, (err) => {
+      console.warn("Could not load saved places", err);
     });
     return () => unsub();
   }, [user]);
@@ -2563,6 +2730,19 @@ const VantiMap = React.memo(function VantiMap() {
 
     setSelectedPlace(finalPlace);
     setShowList(true);
+
+    // Track analytics for Travel Insights
+    if (finalPlace) {
+      const landmarkTypes = ['landmark', 'tourist_attraction', 'museum', 'monument', 'point_of_interest'];
+      const pTypes = finalPlace.types || [];
+      if (pTypes.some((t: string) => landmarkTypes.includes(t))) {
+        addVisitedLandmark();
+        triggerHaptic('success');
+      }
+      if (currentWeatherData?.weather?.[0]?.main) {
+        recordWeatherPreference(currentWeatherData.weather[0].main);
+      }
+    }
     
     // Extract coordinates robustly from various Place object formats
     const lat = typeof finalPlace.location?.lat === 'function' ? finalPlace.location.lat() : (finalPlace.location?.lat || finalPlace.lat);
@@ -3002,26 +3182,34 @@ const VantiMap = React.memo(function VantiMap() {
     });
   }, [agentMarkers, mapBounds, mapZoom, mapCenter]);
 
-  const handleCameraChange = useCallback((e: any) => {
-    setIsMapTilesLoading(true);
-    const newCenter = e.detail.center;
-    setMapCenter(prev => {
-      if (Math.abs(prev.lat - newCenter.lat) < 1e-7 && Math.abs(prev.lng - newCenter.lng) < 1e-7) return prev;
-      return newCenter;
-    });
-    setMapZoom(prev => Math.abs(prev - e.detail.zoom) < 0.001 ? prev : e.detail.zoom);
-    setMapTilt(prev => prev === e.detail.tilt ? prev : e.detail.tilt);
-    setMapHeading(prev => prev === e.detail.heading ? prev : e.detail.heading);
-    handleZoomChangeHaptic(e.detail.zoom);
-    if (map) {
-      try {
-        const newBounds = map.getBounds() || null;
-        setMapBounds(prev => (prev && newBounds && prev.equals(newBounds)) ? prev : newBounds);
-      } catch (err) {
-        console.warn(err);
+  const throttledHandleCameraChange = useMemo(
+    () => throttle((e: any) => {
+      setIsMapTilesLoading(true);
+      const newCenter = e.detail.center;
+      setMapCenter(prev => {
+        if (Math.abs(prev.lat - newCenter.lat) < 1e-7 && Math.abs(prev.lng - newCenter.lng) < 1e-7) return prev;
+        return newCenter;
+      });
+      setMapZoom(prev => Math.abs(prev - e.detail.zoom) < 0.001 ? prev : e.detail.zoom);
+      setMapTilt(prev => prev === e.detail.tilt ? prev : e.detail.tilt);
+      setMapHeading(prev => prev === e.detail.heading ? prev : e.detail.heading);
+      handleZoomChangeHaptic(e.detail.zoom);
+      if (map) {
+        try {
+          const newBounds = map.getBounds() || null;
+          setMapBounds(prev => (prev && newBounds && prev.equals(newBounds)) ? prev : newBounds);
+        } catch (err) {
+          console.warn(err);
+        }
       }
-    }
-  }, [map, handleZoomChangeHaptic]);
+    }, 200),
+    [map, handleZoomChangeHaptic]
+  );
+
+  useEffect(() => {
+    return () => throttledHandleCameraChange.cancel();
+  }, [throttledHandleCameraChange]);
+
 
   return (
     <div 
@@ -3171,9 +3359,9 @@ const VantiMap = React.memo(function VantiMap() {
       <motion.div
         animate={
           isTransitioningStyle 
-            ? { scale: 0.98, filter: 'blur(3px)', opacity: 0.5 }
+            ? { scale: 0.98, filter: 'blur(0px)', opacity: 0.7 }
             : isTransitioning3D || isRecentering 
-            ? { scale: 1.05, filter: isRecentering ? 'blur(1px)' : 'blur(3px)', opacity: 0.8 } 
+            ? { scale: 1.02, filter: 'blur(0px)', opacity: 0.9 } 
             : { scale: 1, filter: 'blur(0px)', opacity: 1 }
         }
         transition={{ duration: 0.4, ease: "easeInOut" }}
@@ -3184,6 +3372,27 @@ const VantiMap = React.memo(function VantiMap() {
         style={{ filter: getAestheticFilter(mapAesthetic) }}
       >
       {is3DActive ? (
+        <>
+        <MapRadialMenu 
+          isOpen={!!radialMenu?.isOpen}
+          position={radialMenu?.position || { x: 0, y: 0 }}
+          placeName={radialMenu?.place?.displayName || radialMenu?.place?.name}
+          onClose={() => setRadialMenu(null)}
+          onAction={(action) => {
+            console.log(`Action ${action} triggered for ${radialMenu?.place?.name}`);
+            if (action === 'save' && radialMenu?.place) {
+              // TODO: Implement save location
+              triggerHaptic('success');
+            } else if (action === 'directions' && radialMenu?.place) {
+              // TODO: Implement get directions
+              triggerHaptic('success');
+            } else if (action === 'share' && radialMenu?.place) {
+              // TODO: Implement share
+              triggerHaptic('success');
+            }
+          }}
+        />
+
         <MapErrorBoundary>
           <Map3D
             ref={map3dRef}
@@ -3199,8 +3408,8 @@ const VantiMap = React.memo(function VantiMap() {
           className="absolute inset-0 w-full h-full"
           {...{
             // Injecting specific 3D terrain and shadow simulation properties
-            lightingMode: 'DYNAMIC',
-            daylightSimulation: true
+            lightingMode: isBatterySaverEnabled ? 'FLAT' : 'DYNAMIC',
+            daylightSimulation: !isBatterySaverEnabled
           } as any}
         >
           {/* Immersive 3D Terrain & Dynamic Shadows (Mocked via Lighting Simulation) */}
@@ -3212,6 +3421,12 @@ const VantiMap = React.memo(function VantiMap() {
               position={{ lat: p.lat, lng: p.lng, altitude: 0 }} 
               label={`${p.displayName} (${p.matchScore}% Match)`} 
               onClick={() => handlePlaceClick(p)}
+              {...({
+                onContextMenu: (e: any) => {
+                  e.preventDefault();
+                  handleMarkerLongPress(e, p);
+                }
+              } as any)}
             />
           ))}
           {agentMarkers.map((p, idx) => (
@@ -3237,9 +3452,25 @@ const VantiMap = React.memo(function VantiMap() {
           )}
         </Map3D>
        </MapErrorBoundary>
+       </>
       ) : (
+        <>
+        <MapRadialMenu 
+          isOpen={!!radialMenu?.isOpen}
+          position={radialMenu?.position || { x: 0, y: 0 }}
+          placeName={radialMenu?.place?.displayName || radialMenu?.place?.name}
+          onClose={() => setRadialMenu(null)}
+          onAction={(action) => {
+            if (action === 'itinerary' && radialMenu?.place) {
+              addToItinerary(radialMenu.place);
+              triggerHaptic('success');
+            }
+          }}
+        />
+
         <MapErrorBoundary>
           <Map
+            {...longPressHandlers}
             defaultCenter={mapCenter}
           defaultZoom={mapZoom}
           defaultTilt={(['satellite', 'hybrid'].includes(mapType)) ? 0 : mapTilt}
@@ -3252,7 +3483,7 @@ const VantiMap = React.memo(function VantiMap() {
           gestureHandling="greedy"
           tiltInteractionEnabled={!perspectiveLock}
           headingInteractionEnabled={!perspectiveLock}
-          onCameraChanged={handleCameraChange}
+          onCameraChanged={throttledHandleCameraChange}
           onTilesloaded={() => setIsMapTilesLoading(false)}
           onIdle={() => setIsMapTilesLoading(false)}
           onClick={() => setContextMenu(null)}
@@ -3288,7 +3519,7 @@ const VantiMap = React.memo(function VantiMap() {
             rotateControl: true,
             tiltControl: true,
             keyboardShortcuts: true,
-            styles: MAP_STYLES[mapTheme as keyof typeof MAP_STYLES] || []
+            styles: MAP_STYLES[(mapTheme === 'Default' ? timePhase.charAt(0).toUpperCase() + timePhase.slice(1) : mapTheme) as keyof typeof MAP_STYLES] || []
           }}
           internalUsageAttributionIds={['gmp_mcp_codeassist_v1_aistudio']}
           className="absolute inset-0 w-full h-full"
@@ -3296,30 +3527,37 @@ const VantiMap = React.memo(function VantiMap() {
           <WeatherMapLayer />
 
           {/* Viewport Landmarks Layer */}
-          {filteredLandmarks.map((l) => (
-            <SafeAdvancedMarker
-              key={`viewport-landmark-${l.id}`}
-              position={l.position}
-              title={l.name}
-              onClick={() => handlePlaceClick({
-                id: l.id,
-                displayName: l.name,
-                lat: l.position.lat,
-                lng: l.position.lng,
-                types: l.types
-              })}
-            >
-              <LandmarkMarker id={l.id} name={l.name} type={l.types?.[0]} isSelected={selectedPlace?.id === l.id} />
-            </SafeAdvancedMarker>
-          ))}
+          {filteredLandmarks.map((l) => {
+             const place = {
+               id: l.id,
+               displayName: l.name,
+               lat: l.position.lat,
+               lng: l.position.lng,
+               types: l.types
+             };
+             return (
+              <SafeAdvancedMarker
+                key={`viewport-landmark-${l.id}`}
+                position={l.position}
+                title={l.name}
+                onClick={() => handlePlaceClick(place)}
+              >
+                <div 
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    handleMarkerLongPress(e, place);
+                  }}
+                  className="cursor-pointer"
+                >
+                  <LandmarkMarker id={l.id} name={l.name} type={l.types?.[0]} isSelected={selectedPlace?.id === l.id} />
+                </div>
+              </SafeAdvancedMarker>
+             );
+          })}
 
           {/* Persistent Visited Journal Pins Layer */}
-          {isMapIdle && map && markerLib && userSnapshots.map((snap) => (
-            <SafeAdvancedMarker
-              key={`journal-pin-${snap.id}`}
-              position={{ lat: Number(snap.lat), lng: Number(snap.lng) }}
-              title={snap.locationName}
-              onClick={() => handlePlaceClick({
+          {isMapIdle && map && markerLib && userSnapshots.map((snap) => {
+            const place = {
                 id: snap.id,
                 displayName: snap.locationName,
                 formattedAddress: `Journal Check-In Memory`,
@@ -3328,24 +3566,35 @@ const VantiMap = React.memo(function VantiMap() {
                 isVisitedJournal: true,
                 visitedJournalData: snap,
                 types: ['point_of_interest']
-              })}
-            >
-              <motion.div
-                initial={{ scale: 0, rotate: -45 }}
-                animate={{ scale: 1, rotate: 0 }}
-                whileHover={{ scale: 1.15 }}
-                className="relative flex flex-col items-center cursor-pointer group"
+            };
+            return (
+              <SafeAdvancedMarker
+                key={`journal-pin-${snap.id}`}
+                position={{ lat: Number(snap.lat), lng: Number(snap.lng) }}
+                title={snap.locationName}
+                onClick={() => handlePlaceClick(place)}
               >
-                <MapMarkerIcon theme="emerald" showEmoji types={['diary']} name={snap.locationName} />
+                <motion.div
+                  initial={{ scale: 0, rotate: -45 }}
+                  animate={{ scale: 1, rotate: 0 }}
+                  whileHover={{ scale: 1.15 }}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    handleMarkerLongPress(e, place);
+                  }}
+                  className="relative flex flex-col items-center cursor-pointer group"
+                >
+                  <MapMarkerIcon theme="emerald" showEmoji types={['diary']} name={snap.locationName} />
 
-                {/* Pin hover tooltip */}
-                <div className="absolute bottom-10 bg-slate-950/95 border border-emerald-500/30 px-3 py-1.5 rounded-lg text-[10px] font-sans font-bold text-slate-100 scale-0 group-hover:scale-100 transition-all origin-bottom shadow-xl whitespace-nowrap z-20 pointer-events-none flex flex-col items-center gap-0.5">
-                  <span className="text-emerald-400 text-[8px] tracking-widest font-mono uppercase">VISITED MEMORY</span>
-                  <span>{snap.locationName}</span>
-                </div>
-              </motion.div>
-            </SafeAdvancedMarker>
-          ))}
+                  {/* Pin hover tooltip */}
+                  <div className="absolute bottom-10 bg-slate-950/95 border border-emerald-500/30 px-3 py-1.5 rounded-lg text-[10px] font-sans font-bold text-slate-100 scale-0 group-hover:scale-100 transition-all origin-bottom shadow-xl whitespace-nowrap z-20 pointer-events-none flex flex-col items-center gap-0.5">
+                    <span className="text-emerald-400 text-[8px] tracking-widest font-mono uppercase">VISITED MEMORY</span>
+                    <span>{snap.locationName}</span>
+                  </div>
+                </motion.div>
+              </SafeAdvancedMarker>
+            );
+          })}
 
           {/* Custom Saved Places Pins Layer from Firestore with Spatial Grid Clustering */}
           {isMapIdle && map && markerLib && clusteredSavedPlaces.map((savedDoc, idx) => {
@@ -3541,9 +3790,22 @@ const VantiMap = React.memo(function VantiMap() {
             >
               {p.isCluster ? (
                 <div className="relative flex items-center justify-center">
-                  {/* Main Cluster Circle Badge */}
-                  <div className="w-10 h-10 rounded-full bg-rose-600 border-2 border-white shadow-2xl flex items-center justify-center text-white text-[10px] font-black hover:scale-105 transition-all z-20 relative">
-                    {isClusterExpanded ? '✕' : p.clusterCount}
+                  {/* AI Discovery Node Badge with Dynamic Solar Shadow */}
+                  <div 
+                    className="w-14 h-14 rounded-full bg-indigo-600 border border-indigo-400/50 shadow-[0_0_20px_rgba(79,70,229,0.6)] flex flex-col items-center justify-center text-white text-[10px] hover:scale-105 transition-all z-20 relative group/node overflow-hidden"
+                    style={{
+                      boxShadow: `calc(15px * cos(var(--sun-azimuth, 0deg))) calc(15px * sin(var(--sun-azimuth, 0deg))) 20px rgba(0,0,0,calc(0.5 * var(--sun-intensity, 1)))`
+                    }}
+                  >
+                    <div className="absolute inset-0 bg-gradient-to-tr from-purple-500/30 to-blue-400/30 animate-pulse mix-blend-overlay pointer-events-none" />
+                    {isClusterExpanded ? (
+                      <span className="font-black text-sm">✕</span>
+                    ) : (
+                      <>
+                        <Sparkles className="w-4 h-4 mb-0.5 text-indigo-200" />
+                        <span className="font-black leading-none">{p.clusterCount}</span>
+                      </>
+                    )}
                   </div>
 
                   {/* Fanned out Members */}
@@ -3572,10 +3834,10 @@ const VantiMap = React.memo(function VantiMap() {
                               y1={0} 
                               x2={-x} 
                               y2={-y} 
-                              stroke="#f43f5e" 
+                              stroke="#6366f1" 
                               strokeWidth="1.5" 
-                              strokeDasharray="3 3"
-                              className="opacity-75"
+                              strokeDasharray="4 4"
+                              className="opacity-60"
                             />
                           </svg>
 
@@ -4086,8 +4348,18 @@ const VantiMap = React.memo(function VantiMap() {
 
         {/* Custom Dynamic Itinerary Connectors */}
         <ItineraryLegsDisplay />
+        
+        {/* Memory Trail Layer */}
+        <MemoryTrailLayer />
+        
+        {/* Cinematic Replay Viewer */}
+        <MemoryReplayViewer />
+
+        {/* Atmosphere Pulse Visualization */}
+        {isAtmosphereOpen && <AtmosphereD3Overlay />}
       </Map>
       </MapErrorBoundary>
+      </>
       )}
 
       {/* Real-time Atmospheric Dynamic Overlay (Clouds, Rain, Storm, Sun flares or Sno drift) */}
@@ -4157,322 +4429,109 @@ const VantiMap = React.memo(function VantiMap() {
         )}
 
         {isCinematicMode && (
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 20 }}
-            className="fixed top-8 left-1/2 -translate-x-1/2 z-[150] pointer-events-auto"
-          >
-            <button 
-              onClick={() => setIsCinematicMode(false)}
-              className="px-6 py-3 bg-red-600/90 backdrop-blur-md border border-white/20 rounded-full text-white font-black uppercase text-[10px] tracking-[0.3em] flex items-center gap-3 shadow-[0_10px_30px_rgba(220,38,38,0.3)] hover:bg-red-500 transition-all active:scale-95 group"
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 20 }}
+              className="fixed top-8 left-1/2 -translate-x-1/2 z-[150] pointer-events-auto"
             >
-              <div className="w-2 h-2 bg-white rounded-full animate-pulse shadow-sm" />
-              Rec Recording... Stop
-            </button>
-          </motion.div>
+              <motion.button 
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                onClick={() => setIsCinematicMode(false)}
+                className="px-6 py-3 bg-red-600/90 backdrop-blur-md border border-white/20 rounded-full text-white font-black uppercase text-[10px] tracking-[0.3em] flex items-center gap-3 shadow-[0_10px_30px_rgba(220,38,38,0.3)] hover:bg-red-500 transition-all group"
+              >
+                <div className="w-2 h-2 bg-white rounded-full animate-pulse shadow-sm" />
+                Rec Recording... Stop
+              </motion.button>
+            </motion.div>
         )}
       </AnimatePresence>
 
       {/* Primary UI Layer */}
       <div className="absolute inset-0 pointer-events-none z-20 flex flex-col p-3 md:p-6 pb-24 md:pb-6">
         {/* Top Floating Widgets */}
-        <div className="absolute top-8 left-8 flex flex-col gap-4">
+        <div className="hidden md:flex absolute top-8 left-8 flex-col gap-4">
           <WeatherCenterOverlay lat={mapCenter.lat} lng={mapCenter.lng} />
         </div>
 
         {/* Top: Branding & Search removed, only search relative z-[100] */}
         <div className="w-full flex flex-col gap-5">
           <div className="w-full max-w-xl mx-auto pointer-events-auto relative z-[100] flex flex-col gap-4 mt-4 md:mt-2 px-4 md:px-0">
-             <div className="flex flex-col items-center gap-4">
-                <div className="bg-[#0f1117]/80 backdrop-blur-xl border border-white/10 p-1.5 rounded-full flex items-center gap-1 shadow-2xl">
-                   {[
-                     { id: 'all', label: 'All' },
-                     { id: 'restaurant', label: 'Eat' },
-                     { id: 'landmark', label: 'See' },
-                     { id: 'hotel', label: 'Stay' }
-                   ].map((cat) => (
-                     <button
-                       key={cat.id}
-                       onClick={() => {
-                         triggerHaptic('tap');
-                         if (cat.id === 'all') {
-                           setActiveMarkerFilters(['all']);
-                         } else {
-                           const current = activeMarkerFilters.filter(f => f !== 'all');
-                           const next = current.includes(cat.id)
-                             ? current.filter(f => f !== cat.id)
-                             : [...current, cat.id];
-                           setActiveMarkerFilters(next.length === 0 ? ['all'] : next);
-                         }
-                       }}
-                       className={cn(
-                         "px-4 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest transition-all",
-                         activeMarkerFilters.includes(cat.id) 
-                           ? "bg-rose-500 text-white shadow-[0_0_15px_rgba(244,63,94,0.4)]" 
-                           : "text-slate-500 hover:text-slate-300 hover:bg-white/5"
-                       )}
-                     >
-                       {cat.label}
-                     </button>
-                   ))}
-                </div>
-
-                {/* Travel Mood Pills */}
-                <div className="flex items-center gap-1.5">
-                  {[
-                    { id: 'normal', label: 'Default', icon: <Compass className="w-3 h-3" /> },
-                    { id: 'adventure', label: 'Adventure', icon: <Navigation className="w-3 h-3" /> },
-                    { id: 'relaxation', label: 'Relax', icon: <Coffee className="w-3 h-3" /> },
-                    { id: 'culinary', label: 'Foodie', icon: <Utensils className="w-3 h-3" /> }
-                  ].map((mood) => (
-                    <button
-                      key={mood.id}
-                      onClick={() => {
-                        setTravelMood(mood.id as any);
-                        triggerHaptic('switch');
-                        addToast(`Mood: ${mood.label}`, 'info');
-                      }}
-                      className={cn(
-                        "flex items-center gap-2 px-3 py-1.5 rounded-full transition-all border",
-                        travelMood === mood.id 
-                          ? "bg-indigo-500 border-indigo-400 text-white shadow-lg shadow-indigo-500/20" 
-                          : "bg-[#0f1117]/60 backdrop-blur-md border-white/10 text-slate-400 hover:text-slate-200"
-                      )}
-                    >
-                      <span className={cn(travelMood === mood.id ? "text-white" : "text-slate-500")}>{mood.icon}</span>
-                      <span className="text-[8px] font-black uppercase tracking-widest">{mood.label}</span>
-                    </button>
-                  ))}
-                </div>
-             </div>
-             
-             <div id="vanti-search-nav"><PlacesAutocompleteInput onPlaceSelect={handlePlaceClick} /></div>
+              {/* Search input - Simplified */}
+              <div className="flex items-center gap-2 pointer-events-auto">
+                 <div className="flex-1" id="vanti-search-nav">
+                   <PlacesAutocompleteInput onPlaceSelect={handlePlaceClick} />
+                 </div>
+              </div>
           </div>
         </div>
 
         {/* Bottom Navigation Bar (App-Optimized Consolidated GNB) */}
-        <div className="absolute inset-x-0 bottom-0 p-4 md:p-6 flex flex-col items-center gap-4 pointer-events-none z-50">
-          
+        <div className="absolute inset-x-0 bottom-[calc(5rem+env(safe-area-inset-bottom,0px))] md:bottom-0 p-4 md:p-6 flex flex-col items-center gap-4 pointer-events-none z-50">
           <div className="w-full flex justify-between items-end gap-3 pointer-events-none mb-1">
             {/* Left side info (Speedometer) */}
             <div className="flex-1 pointer-events-none">
             </div>
 
-            {/* Right side floating map controls (Functional Clustering) */}
-            <div className="flex flex-col gap-3 pointer-events-auto items-end relative">
-              {/* Quick Creation Menu (Bookmark/Marker) */}
-              <AnimatePresence>
-                {isCreateMenuOpen && (
-                  <motion.div 
-                    initial={{ opacity: 0, y: 10, scale: 0.9 }}
-                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                    exit={{ opacity: 0, y: 10, scale: 0.9 }}
-                    className="flex flex-col gap-2.5 mb-2"
+            {/* Clustered Command Pods (Mobile Optimized) */}
+            <div className="flex flex-col gap-4 pointer-events-none items-end absolute bottom-4 md:bottom-6 right-4 md:right-6">
+                {/* 1. ARCHITECTURE POD (View & Orientation) */}
+                <div className="flex flex-col items-end gap-2 group">
+                  <AnimatePresence>
+                     {showLayersMenu && (
+                      <motion.div 
+                        initial={{ opacity: 0, x: 20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        exit={{ opacity: 0, x: 20 }}
+                        className="bg-[#0f1117]/95 backdrop-blur-3xl border border-white/10 p-2 rounded-2xl shadow-2xl mb-2 flex flex-col gap-1 w-48 pointer-events-auto"
+                      >
+                         <motion.button whileHover={{ x: 5 }} whileTap={{ scale: 0.98 }} onClick={() => { setIs3DActive(!is3DActive); triggerHaptic('switch'); }} className={cn("flex items-center gap-3 w-full p-2.5 rounded-xl transition-all text-left", is3DActive ? "bg-indigo-500/10 text-indigo-400" : "hover:bg-white/5 text-slate-300")}>
+                           <Box className="w-4 h-4" />
+                           <span className="text-xs font-semibold">3D Environment</span>
+                         </motion.button>
+                         <motion.button whileHover={{ x: 5 }} whileTap={{ scale: 0.98 }} onClick={() => { setIsAROpen(!isAROpen); triggerHaptic('mode3d'); setShowLayersMenu(false); }} className="flex items-center gap-3 w-full p-2.5 rounded-xl hover:bg-white/5 text-slate-300 transition-all text-left">
+                           <Camera className="w-4 h-4" />
+                           <span className="text-xs font-semibold">AR Camera</span>
+                         </motion.button>
+                         <motion.button whileHover={{ x: 5 }} whileTap={{ scale: 0.98 }} onClick={() => { setShowStyleSwitcher(true); setShowLayersMenu(false); }} className="flex items-center gap-3 w-full p-2.5 rounded-xl hover:bg-white/5 text-slate-300 transition-all text-left">
+                           <Palette className="w-4 h-4" />
+                           <span className="text-xs font-semibold">Aesthetic Engine</span>
+                         </motion.button>
+                         <motion.button whileHover={{ x: 5 }} whileTap={{ scale: 0.98 }} onClick={() => { setIsGaussianActive(!isGaussianActive); triggerHaptic('switch'); }} className={cn("flex items-center gap-3 w-full p-2.5 rounded-xl transition-all text-left", isGaussianActive ? "bg-cyan-500/10 text-cyan-400" : "hover:bg-white/5 text-slate-300")}>
+                           <Sparkles className="w-4 h-4" />
+                           <span className="text-xs font-semibold text-cyan-400">Gaussian Vision</span>
+                         </motion.button>
+                         <div className="h-px bg-white/5 my-1" />
+                         <motion.button whileHover={{ x: 5 }} whileTap={{ scale: 0.98 }} onClick={() => { triggerRecenter(); setShowLayersMenu(false); }} className="flex items-center gap-3 w-full p-2.5 rounded-xl hover:bg-white/5 text-slate-300 transition-all text-left">
+                           <Crosshair className="w-4 h-4" />
+                           <span className="text-xs font-semibold">Calibrate Position</span>
+                         </motion.button>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                  <motion.button 
+                    whileHover={{ scale: 1.1 }}
+                    whileTap={{ scale: 0.9 }}
+                    onClick={() => {
+                      setShowLayersMenu(!showLayersMenu);
+                      setIsCreateMenuOpen(false);
+                      triggerHaptic('tap');
+                    }}
+                    className={cn(
+                      "w-14 h-14 rounded-full flex items-center justify-center transition-all shadow-2xl border pointer-events-auto",
+                      showLayersMenu ? "bg-indigo-500 border-indigo-400 text-white" : "bg-[#0a0c10]/95 backdrop-blur-3xl border-white/10 text-slate-400 hover:text-white"
+                    )}
+                    title="View & Tools"
                   >
-                    <button 
-                      onClick={() => {
-                        triggerHaptic('impact');
-                        let latVal = 37.5665;
-                        let lngVal = 126.9780;
-                        if (is3DActive && map3dRef.current) {
-                           const cen = (map3dRef.current as any).center;
-                           if (cen) { latVal = cen.lat; lngVal = cen.lng; }
-                        } else if (map) {
-                           const cen = map.getCenter();
-                           if (cen) { latVal = cen.lat(); lngVal = cen.lng(); }
-                        } else if (userLocation) {
-                           latVal = userLocation.lat;
-                           lngVal = userLocation.lng;
-                        }
-                        setBookmarkingLat(latVal);
-                        setBookmarkingLng(lngVal);
-                        setBookmarkingName(`Custom Spot (${latVal.toFixed(4)}, ${lngVal.toFixed(4)})`);
-                        setIsCreateMenuOpen(false);
-                        addToast("Spot ready to bookmark", "info");
-                      }}
-                      className="w-12 h-12 rounded-2xl flex items-center justify-center transition-all bg-[#0f1117]/90 backdrop-blur-3xl border border-amber-500/20 shadow-2xl text-amber-500 hover:bg-amber-500/10"
-                      title="Bookmark Coordinates"
-                    >
-                       <Bookmark className="w-5 h-5" />
-                    </button>
-
-                    <button 
-                      onClick={() => {
-                        triggerHaptic('impact');
-                        if (map) {
-                           const center = map.getCenter();
-                           if (center) {
-                             setAddingMarkerLat(center.lat());
-                             setAddingMarkerLng(center.lng());
-                           }
-                        } else if (userLocation) {
-                           setAddingMarkerLat(userLocation.lat);
-                           setAddingMarkerLng(userLocation.lng);
-                        }
-                        setIsCreateMenuOpen(false);
-                      }}
-                      className="w-12 h-12 rounded-2xl flex items-center justify-center transition-all bg-[#0f1117]/90 backdrop-blur-3xl border border-white/10 shadow-2xl text-slate-400 hover:text-white"
-                      title="Add Custom Pin"
-                    >
-                       <MapPin className="w-5 h-5" />
-                    </button>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-
-              <button 
-                onClick={() => {
-                  setIsCreateMenuOpen(!isCreateMenuOpen);
-                  triggerHaptic('tap');
-                  setShowLayersMenu(false);
-                }}
-                className={cn(
-                  "w-12 h-12 rounded-2xl flex items-center justify-center transition-all shadow-2xl relative border",
-                  isCreateMenuOpen ? "bg-amber-500 text-white border-amber-400" : "bg-[#0f1117]/95 backdrop-blur-3xl border-white/10 text-slate-400 hover:text-white"
-                )}
-              >
-                <Plus className={cn("w-6 h-6 transition-transform", isCreateMenuOpen && "rotate-45")} />
-              </button>
-
-              {showLayersMenu && (
-                <motion.div 
-                  initial={{ opacity: 0, scale: 0.9, x: 20 }}
-                  animate={{ opacity: 1, scale: 1, x: 0 }}
-                  exit={{ opacity: 0, scale: 0.9, x: 20 }}
-                  className="absolute right-full mr-4 bottom-[calc(48px+12px)] bg-[#0f1117]/95 backdrop-blur-3xl border border-white/10 p-3 rounded-2xl shadow-2xl origin-bottom-right w-56 flex flex-col gap-1 z-50 pointer-events-auto"
-                >
-                  <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2 px-2">Map Overlays</div>
-                  
-                  <button onClick={() => { setShowTravelInsights(true); setShowLayersMenu(false); }} className="flex items-center gap-3 w-full p-2.5 rounded-xl transition-all text-left hover:bg-indigo-500/10 text-slate-300">
-                    <History className="w-4 h-4 text-indigo-400" />
-                    <span className="text-xs font-semibold">Travel Insights</span>
-                  </button>
-
-                  <div className="h-px bg-white/5 my-1 mx-2" />
-                  <button onClick={() => { setShowTrendingPins(!showTrendingPins); triggerHaptic('switch'); addToast(showTrendingPins ? "Trending spots hidden" : "Trending spots visible", "info"); }} className={cn("flex items-center gap-3 w-full p-2.5 rounded-xl transition-all text-left", showTrendingPins ? "bg-rose-500/10 text-rose-400" : "hover:bg-white/5 text-slate-300")}>
-                    <Flame className={cn("w-4 h-4", showTrendingPins && "animate-pulse")} />
-                    <span className="text-xs font-semibold">Trending Spots</span>
-                  </button>
-                  <button onClick={() => { setShowWeatherOverlay(!showWeatherOverlay); triggerHaptic('switch'); addToast(showWeatherOverlay ? "Atmospherics disabled" : "Atmospherics active", "info"); }} className={cn("flex items-center gap-3 w-full p-2.5 rounded-xl transition-all text-left", showWeatherOverlay ? "bg-sky-500/10 text-sky-400" : "hover:bg-white/5 text-slate-300")}>
-                    <Cloud className="w-4 h-4" />
-                    <span className="text-xs font-semibold">Weather Overlay</span>
-                  </button>
-                  <button onClick={() => { setShowWeatherLayer(!showWeatherLayer); triggerHaptic('switch'); addToast(showWeatherLayer ? "Radar beam offline" : "Satellite tracking online", "success"); }} className={cn("flex items-center gap-3 w-full p-2.5 rounded-xl transition-all text-left", showWeatherLayer ? "bg-cyan-500/10 text-cyan-400" : "hover:bg-white/5 text-slate-300")}>
-                    <CloudRain className="w-4 h-4" />
-                    <span className="text-xs font-semibold">Live Radar</span>
-                  </button>
-                  <button onClick={() => { setIsDiscoverMode(!isDiscoverMode); triggerHaptic('switch'); setShowLayersMenu(false); }} className={cn("flex items-center gap-3 w-full p-2.5 rounded-xl transition-all text-left", isDiscoverMode ? "bg-amber-500/10 text-amber-400" : "hover:bg-white/5 text-slate-300")}>
-                    <RadarIcon className={cn("w-4 h-4", isDiscoverMode && "animate-spin")} />
-                    <span className="text-xs font-semibold">Discovery Radar</span>
-                  </button>
-                  <button onClick={() => { setShowTrafficLayer(!showTrafficLayer); triggerHaptic('switch'); addToast(showTrafficLayer ? "Hiding traffic flow" : "Live traffic synchronized", "info"); }} className={cn("flex items-center gap-3 w-full p-2.5 rounded-xl transition-all text-left", showTrafficLayer ? "bg-emerald-500/10 text-emerald-400" : "hover:bg-white/5 text-slate-300")}>
-                    <Layers className="w-4 h-4" />
-                    <span className="text-xs font-semibold">Live Traffic</span>
-                  </button>
-                  <button onClick={() => { setShowSmartPlanner(true); triggerHaptic('impact'); }} className="flex items-center gap-3 w-full p-2.5 rounded-xl hover:bg-white/5 text-slate-300 transition-all text-left">
-                    <Sparkles className="w-4 h-4 text-indigo-400" />
-                    <span className="text-xs font-semibold">Smart Planner</span>
-                  </button>
-                  <button onClick={() => { setShowActivityLayer(!showActivityLayer); triggerHaptic('switch'); addToast(showActivityLayer ? "Activity stream offline" : "Nearby activity live", "success"); }} className={cn("flex items-center gap-3 w-full p-2.5 rounded-xl transition-all text-left", showActivityLayer ? "bg-amber-500/10 text-amber-400" : "hover:bg-white/5 text-slate-300")}>
-                    <Sparkles className="w-4 h-4" />
-                    <span className="text-xs font-semibold">Activity Stream</span>
-                  </button>
-
-                  <div className="w-full h-px bg-white/10 my-2" />
-                  <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2 px-2">Map Legend</div>
-                  
-                  {[{ 
-                      show: showPinsLayer && selectedCategory !== 'All',
-                      icon: <MapPin className="w-3.5 h-3.5 text-rose-400" />,
-                      label: `${selectedCategory} Nodes`
-                    },
-                    { 
-                      show: true,
-                      icon: <Sparkles className="w-3.5 h-3.5 text-amber-400" />,
-                      label: 'AI Insights'
-                    },
-                    { 
-                      show: true,
-                      icon: <Users className="w-3.5 h-3.5 text-indigo-400" />,
-                      label: 'Network Nodes'
-                    },
-                    { 
-                      show: itinerary && itinerary.length > 0,
-                      icon: <div className="w-4 h-0.5 bg-rose-500 rounded-full" />,
-                      label: 'Active Trajectory'
-                    },
-                    { 
-                      show: showTrafficLayer,
-                      icon: <div className="flex gap-0.5 items-center"><div className="w-2 h-0.5 bg-emerald-500 rounded-full" /><div className="w-1 h-0.5 bg-rose-500 rounded-full" /></div>,
-                      label: 'Traffic Flow'
-                    },
-                    { 
-                      show: showWeatherLayer || activeWeather !== null,
-                      icon: <Cloud className="w-3.5 h-3.5 text-sky-400" />,
-                      label: activeWeather || 'Atmosphere'
-                    }
-                  ].filter(item => item.show).map((item, idx) => (
-                    <div key={idx} className="flex items-center gap-3 w-full px-2.5 py-1.5 opacity-80">
-                      <div className="w-4 flex items-center justify-center shrink-0">
-                        {item.icon}
-                      </div>
-                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-tight">{item.label}</span>
-                    </div>
-                  ))}
-
-                  <div className="w-full h-px bg-white/10 my-2" />
-                  <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2 px-2">View Modes</div>
-
-                  <button onClick={() => { setIsAROpen(!isAROpen); triggerHaptic('mode3d'); setShowLayersMenu(false); }} className={cn("flex items-center gap-3 w-full p-2.5 rounded-xl transition-all text-left", isAROpen ? "bg-cyan-500/10 text-cyan-400" : "hover:bg-white/5 text-slate-300")}>
-                    <Camera className="w-4 h-4" />
-                    <span className="text-xs font-semibold">AR Camera</span>
-                  </button>
-                  <button onClick={() => { setPerspectiveLock(!perspectiveLock); triggerHaptic('switch'); }} className={cn("flex items-center gap-3 w-full p-2.5 rounded-xl transition-all text-left", perspectiveLock ? "bg-rose-500/10 text-rose-400" : "hover:bg-white/5 text-slate-300")}>
-                    <LocateFixed className="w-4 h-4" />
-                    <span className="text-xs font-semibold">Perspective Lock</span>
-                  </button>
-                  <button onClick={() => { setIs3DActive(!is3DActive); triggerHaptic('switch'); }} className={cn("flex items-center gap-3 w-full p-2.5 rounded-xl transition-all text-left", is3DActive ? "bg-indigo-500/10 text-indigo-400" : "hover:bg-white/5 text-slate-300")}>
-                    <Box className="w-4 h-4" />
-                    <span className="text-xs font-semibold">3D Mode</span>
-                  </button>
-                  <button onClick={() => { 
-                      const newTilt = mapTilt === 0 ? 65 : 0;
-                      if (is3DActive && map3dRef.current) {
-                        (map3dRef.current as any).tilt = newTilt;
-                      } else if (map) {
-                        map.moveCamera({ tilt: newTilt });
-                      }
-                      setMapTilt(newTilt);
-                      triggerHaptic('switch');
-                    }} 
-                    className={cn("flex items-center gap-3 w-full p-2.5 rounded-xl transition-all text-left", mapTilt > 0 ? "bg-amber-500/10 text-amber-400" : "hover:bg-white/5 text-slate-300")}>
-                    <LayoutGrid className="w-4 h-4" style={{ transform: mapTilt > 0 ? 'rotateX(45deg)' : 'none' }} />
-                    <span className="text-xs font-semibold">Map Tilt</span>
-                  </button>
-                </motion.div>
-              )}
-
-              <button 
-                id="vanti-layers-nav"
-                onClick={() => {
-                  setShowLayersMenu(!showLayersMenu);
-                  triggerHaptic('tap');
-                  setIsCreateMenuOpen(false);
-                }} 
-                className={cn("w-12 h-12 rounded-2xl flex items-center justify-center transition-all shadow-2xl relative", showLayersMenu ? "bg-indigo-500 hover:bg-indigo-600 text-white border-indigo-400" : "bg-[#0f1117]/95 backdrop-blur-3xl border border-white/10 text-slate-400 hover:text-white")}
-              >
-                 <Layers className={cn("w-5 h-5", showLayersMenu && "animate-pulse")} />
-              </button>
-
-              <button onClick={() => { triggerRecenter(); triggerHaptic('impact'); setIsCreateMenuOpen(false); setShowLayersMenu(false); }} className="w-12 h-12 bg-rose-500 hover:bg-rose-600 rounded-2xl flex items-center justify-center text-white shadow-lg shadow-rose-500/30 active:scale-95 transition-all">
-                 <Crosshair className="w-6 h-6" />
-              </button>
+                    <Layers className="w-7 h-7" />
+                  </motion.button>
+                </div>
+              </div>
             </div>
-          </div>
 
-          {/* Main Action Bar (GNB Cluster Optimization) */}
-          <div className="w-full max-w-lg bg-[#0f1117]/95 backdrop-blur-3xl border border-white/10 p-2 rounded-[2rem] shadow-[0_20px_50px_rgba(0,0,0,0.5)] flex items-center justify-between pointer-events-auto ring-1 ring-white/5 relative">
+            {/* Main Action Bar (GNB Cluster Optimization) */}
+          <div className="hidden md:flex w-full max-w-lg bg-[#0f1117]/95 backdrop-blur-3xl border border-white/10 p-2 rounded-[2rem] shadow-[0_20px_50px_rgba(0,0,0,0.5)] items-center justify-between pointer-events-auto ring-1 ring-white/5 relative">
             {[
               { id: 'explore', label: 'Explore', icon: Compass },
               { id: 'route', label: 'Route', icon: Navigation },
@@ -4487,8 +4546,10 @@ const VantiMap = React.memo(function VantiMap() {
                              (tab.id === 'nodes' && activeMode === 'profile');
               
               return (
-                <button
+                 <motion.button
                   key={tab.id}
+                  whileHover={{ scale: 1.1, filter: 'brightness(1.2)' }}
+                  whileTap={{ scale: 0.9 }}
                   id={`vanti-${tab.id}-nav`}
                   onClick={() => {
                     triggerHaptic('switch');
@@ -4516,7 +4577,7 @@ const VantiMap = React.memo(function VantiMap() {
                     }
                   }}
                   className={cn(
-                    "flex-1 flex flex-col items-center justify-center py-2 transition-all relative group",
+                    "flex-1 flex flex-col items-center justify-center py-2 transition-all relative group focus:outline-none",
                     tab.id === 'ai' ? "rounded-full aspect-square max-w-[54px] -mt-8 bg-gradient-to-br from-indigo-500 to-purple-600 shadow-xl border border-indigo-400 text-white" : "rounded-2xl",
                     tab.id !== 'ai' && (active && tab.id !== 'settings' ? "text-rose-500" : "text-slate-500 hover:text-slate-300"),
                     tab.id === 'ai' && active && "shadow-[0_0_25px_rgba(99,102,241,0.7)]"
@@ -4525,11 +4586,10 @@ const VantiMap = React.memo(function VantiMap() {
                   {active && tab.id !== 'ai' && tab.id !== 'settings' && <motion.div layoutId="nav-active" className="absolute inset-0 bg-white/5 rounded-2xl border border-white/10" />}
                   <Icon className={cn("w-5 h-5 mb-1 z-10 transition-transform", active && tab.id !== 'settings' && "scale-110", tab.id === 'ai' && "mb-0 w-6 h-6 animate-pulse")} />
                   {tab.id !== 'ai' && <span className="text-[7px] font-black uppercase tracking-[0.25em] z-10 leading-none">{tab.label}</span>}
-                </button>
+                </motion.button>
               );
             })}
           </div>
-
         </div>
       </div>
 
@@ -4748,68 +4808,36 @@ const VantiMap = React.memo(function VantiMap() {
       
       {/* Multimodal Gemini Smart chatbot companion */}
       <Chatbot onMapCommand={handleMapCommand} isVisible={!showList && !isCinematicMode} />
+
+      {/* Route Planner Panel */}
+      {(showRoutePlanner || activeMode === 'planner') && (
+        <RoutePlannerPanel onClose={() => {
+          setShowRoutePlanner(false);
+          if (activeMode === 'planner') {
+            setActiveMode('all');
+          }
+        }} />
+      )}
+
       <QuickPhrasesOverlay />
 
-      {/* Sophisticated Map Tile Compiling / Loading HUD overlay */}
+      {/* Sophisticated Map Tile Compiling / Loading HUD overlay - Minimized to Dot per User Request */}
       <AnimatePresence>
         {isMapTilesLoading && (
-          <div className="absolute top-[88px] md:top-24 left-1/2 -translate-x-1/2 z-[100] pointer-events-none">
-            <motion.div 
-              initial={{ opacity: 0, y: -15, scale: 0.95 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: -15, scale: 0.95 }}
-              className="flex flex-col items-center gap-1.5 px-4 py-2.5 min-w-[280px] bg-[#0c0e12]/95 backdrop-blur-md rounded-2xl border border-rose-500/20 shadow-[0_8px_32px_rgba(244,63,94,0.15)] overflow-hidden"
-            >
-              {/* Top glow sweep indicator */}
-              <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-rose-400 to-transparent shadow-[0_0_8px_#f43f5e]" />
-              
-              {/* Scanning neon grid simulation line */}
-              <motion.div
-                className="absolute inset-x-0 h-[20px] bg-gradient-to-b from-rose-500/0 via-rose-500/5 to-rose-500/0"
-                animate={{
-                  y: [-20, 60]
-                }}
-                transition={{
-                  repeat: Infinity,
-                  duration: 2.2,
-                  ease: "linear"
-                }}
-              />
-
-              {/* Title & Status Beacon */}
-              <div className="flex items-center gap-2">
-                <div className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse shrink-0" />
-                <span className="text-[9px] font-black uppercase tracking-widest text-slate-300 font-mono">
-                  VANTi VECTOR // COMPILING
-                </span>
-              </div>
-
-              {/* Progress Track */}
-              <div className="w-full h-1 bg-slate-950/80 rounded-full overflow-hidden relative">
-                <motion.div 
-                  className="absolute inset-y-0 bg-rose-500 rounded-full"
-                  animate={{ 
-                    x: ['-100%', '100%'] 
-                  }}
-                  transition={{ 
-                    repeat: Infinity, 
-                    duration: 1.4, 
-                    ease: "easeInOut" 
-                  }}
-                  style={{ width: '45%' }}
-                />
-              </div>
-
-              {/* Details Metrics bar */}
-              <div className="flex justify-between items-center w-full px-0.5">
-                <span className="text-[7.5px] font-mono font-bold text-slate-500 uppercase tracking-tighter">
-                  SECTOR RECENTERED
-                </span>
-                <span className="text-[7.5px] font-mono font-bold text-rose-400 uppercase tracking-tighter">
-                  INDEXING TILESETS
-                </span>
-              </div>
-            </motion.div>
+          <div className="absolute top-[88px] md:top-24 left-1/2 -translate-x-1/2 z-[100] flex flex-col items-center pointer-events-auto">
+            <StatusIndicator 
+              id="vector-spatial"
+              label="Vector Indexing"
+              dotColor="rose"
+              pulse
+              tooltipTitle="Spatial Engine Active"
+              tooltipDescription="The spatial mesh is being recalculated. Vanti is indexing high-resolution map tiles and vector geometry for the current sector."
+              metrics={[
+                { label: 'Kernels', value: '1.2M Ready' },
+                { label: 'Density', value: 'High' },
+                { label: 'Status', value: 'Indexing...' }
+              ]}
+            />
           </div>
         )}
       </AnimatePresence>
@@ -5446,7 +5474,7 @@ const VantiMap = React.memo(function VantiMap() {
                   </div>
 
                 {/* Main scrollable body container: Persistent View Stack with CSS Toggling */}
-                <div className="flex-1 overflow-y-auto p-4 scrollbar-thin scrollbar-thumb-slate-800 relative">
+                <div className="flex-1 overflow-y-auto p-4 pb-28 md:pb-4 scrollbar-thin scrollbar-thumb-slate-800 relative">
                   
                   {/* EXPLORE & DISCOVERY LAYER (Active for all, social, genius) */}
                   <motion.div 
@@ -6267,136 +6295,29 @@ const VantiMap = React.memo(function VantiMap() {
       )}
     </AnimatePresence>
 
-    {/* Immersive Sci-Fi Map-Style HUD Transition Overlay */}
-    <AnimatePresence>
-      {isTransitioningStyle && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: 0.3 }}
-          className="fixed inset-0 w-full h-full z-[9999] pointer-events-none flex flex-col items-center justify-center bg-[#070913]/75 backdrop-blur-[6px] overflow-hidden"
-        >
-          {/* Grid Line Visualizers */}
-          <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.02)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.02)_1px,transparent_1px)] bg-[size:40px_40px] [mask-image:radial-gradient(ellipse_60%_50%_at_50%_50%,#000_70%,transparent_100%)] opacity-80" />
-
-          {/* Glowing Orbs in Background */}
-          <div className={cn(
-            "absolute w-[450px] h-[450px] rounded-full filter blur-[120px] opacity-20 mix-blend-screen animate-pulse pointer-events-none transition-colors duration-500",
-            transitionTargetStyle === 'satellite' ? 'bg-cyan-500/20' : 'bg-emerald-500/20'
-          )} />
-
-          {/* Scanner concentric system */}
-          <div className="relative flex items-center justify-center w-80 h-80">
-            
-            {/* Outer Circular Tech Frame */}
-            <motion.div
-              initial={{ rotate: 0 }}
-              animate={{ rotate: 360 }}
-              transition={{ repeat: Infinity, duration: 15, ease: "linear" }}
-              className={cn(
-                "absolute inset-0 rounded-full border-2 border-dashed opacity-45",
-                transitionTargetStyle === 'satellite' ? 'border-cyan-500/30' : 'border-emerald-500/30'
-              )}
-            />
-
-            {/* Inner Circular Frame with Ticking Motion */}
-            <motion.div
-              initial={{ rotate: 360 }}
-              animate={{ rotate: 0 }}
-              transition={{ repeat: Infinity, duration: 8, ease: "linear" }}
-              className={cn(
-                "absolute w-64 h-64 rounded-full border border-double p-1 opacity-60",
-                transitionTargetStyle === 'satellite' ? 'border-cyan-400/40' : 'border-emerald-400/40'
-              )}
-            >
-              <div className={cn(
-                "w-full h-full rounded-full border border-dashed",
-                transitionTargetStyle === 'satellite' ? 'border-cyan-400/25' : 'border-emerald-400/25'
-              )} />
-            </motion.div>
-
-            {/* Central Target Reticle */}
-            <div className="relative flex items-center justify-center">
-              {/* Horizontal & Vertical Crosshairs */}
-              <div className={cn( "absolute w-28 h-[1px] opacity-50", transitionTargetStyle === 'satellite' ? 'bg-cyan-500/40' : 'bg-emerald-500/40' )} />
-              <div className={cn( "absolute h-28 w-[1px] opacity-50", transitionTargetStyle === 'satellite' ? 'bg-cyan-500/40' : 'bg-emerald-500/40' )} />
-              
-              {/* Center Core Pulsing Glow */}
-              <motion.div
-                animate={{ scale: [1, 1.25, 1] }}
-                transition={{ repeat: Infinity, duration: 1.2, ease: "easeInOut" }}
-                className={cn(
-                  "w-4.5 h-4.5 rounded-full shadow-[0_0_20px_rgba(34,211,238,0.7)]",
-                  transitionTargetStyle === 'satellite' ? 'bg-cyan-400 shadow-cyan-400/70' : 'bg-emerald-400 shadow-emerald-400/70'
-                )}
-              />
-            </div>
-
-            {/* Futuristic corners surrounding the frame */}
-            <div className={cn("absolute -top-4 -left-4 w-6 h-6 border-t-2 border-l-2 transition-all", transitionTargetStyle === 'satellite' ? 'border-cyan-400' : 'border-emerald-400')} />
-            <div className={cn("absolute -top-4 -right-4 w-6 h-6 border-t-2 border-r-2 transition-all", transitionTargetStyle === 'satellite' ? 'border-cyan-400' : 'border-emerald-400')} />
-            <div className={cn("absolute -bottom-4 -left-4 w-6 h-6 border-b-2 border-l-2 transition-all", transitionTargetStyle === 'satellite' ? 'border-cyan-400' : 'border-emerald-400')} />
-            <div className={cn("absolute -bottom-4 -right-4 w-6 h-6 border-b-2 border-r-2 transition-all", transitionTargetStyle === 'satellite' ? 'border-cyan-400' : 'border-emerald-400')} />
-
-            {/* Vertical Laser Scanline Sweep */}
-            <motion.div
-              initial={{ translateY: -170 }}
-              animate={{ translateY: 170 }}
-              transition={{ repeat: Infinity, repeatType: "reverse", duration: 1.2, ease: "easeInOut" }}
-              className={cn(
-                "absolute left-4 right-4 h-[2.5px] opacity-90 shadow-[0_0_12px_4px_rgba(6,182,212,0.6)]",
-                transitionTargetStyle === 'satellite' 
-                  ? 'bg-cyan-400 shadow-cyan-400/50' 
-                  : 'bg-emerald-400 shadow-emerald-400/50'
-              )}
-            />
-          </div>
-
-          {/* Calibrator Text System */}
-          <div className="mt-12 text-center select-none z-10">
-            <div className="flex items-center justify-center gap-2 mb-2">
-              {transitionTargetStyle === 'satellite' ? (
-                <Globe className="w-4 h-4 text-cyan-400 animate-[spin_8s_linear_infinite]" />
-              ) : (
-                <Layers className="w-4 h-4 text-emerald-400 animate-pulse" />
-              )}
-              <span className={cn(
-                "font-mono text-[9px] font-black uppercase tracking-[0.25em] bg-clip-text text-transparent bg-gradient-to-r",
-                transitionTargetStyle === 'satellite' 
-                  ? 'from-cyan-100 to-cyan-400' 
-                  : 'from-emerald-100 to-emerald-400'
-              )}>
-                {transitionTargetStyle === 'satellite' ? 'VANTI ORBITAL LINK' : 'VANTI VECTOR SYSTEM'}
-              </span>
-            </div>
-            
-            <h2 className="text-white text-md font-black uppercase tracking-wider font-mono">
-              {transitionTargetStyle === 'satellite' ? 'synchronizing orbital grid' : 'recompiling core geometry'}
-            </h2>
-
-            {/* Small telemetry detailed stats */}
-            <div className="mt-4 flex flex-col gap-1.5 items-center font-mono text-[8px] text-slate-500 font-bold uppercase tracking-widest leading-none bg-black/50 py-3 px-6 rounded-2xl border border-white/5 shadow-2xl">
-              <div className="flex items-center gap-3">
-                <span>LAT: {mapCenter.lat.toFixed(5)}</span>
-                <span className="w-1 h-1 rounded-full bg-slate-700" />
-                <span>LNG: {mapCenter.lng.toFixed(5)}</span>
-              </div>
-              <div className="mt-1.5 text-rose-500/90 animate-pulse flex items-center gap-1">
-                <Activity className="w-3.5 h-3.5 text-rose-500" />
-                <span>ACTIVE CALIBRATION ({Math.floor(mapZoom * (100 / 21))}% SCAN LEVEL)</span>
-              </div>
-            </div>
-          </div>
-        </motion.div>
-      )}
-    </AnimatePresence>
-
+    {/* Immersive Sci-Fi Map-Style HUD Transition Overlay - REMOVED AS PER USER REQUEST */}
+    
     <GestureOnboarding />
 
+    {showDestinationPicker && (
+      <DestinationPickerModal 
+        onClose={() => setShowDestinationPicker(false)}
+        onSelect={(city) => {
+          setShowDestinationPicker(false);
+          setSelectedCityForBriefing(city);
+        }}
+      />
+    )}
+    {selectedCityForBriefing && (
+      <DestinationBriefingModal 
+        city={selectedCityForBriefing}
+        onClose={() => setSelectedCityForBriefing(null)}
+      />
+    )}
+    
     </motion.div>
-  </div>
-);
+    </div>
+  );
 });
 
 export default VantiMap;

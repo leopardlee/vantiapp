@@ -6,6 +6,20 @@ import { BottomNavigation } from './components/BottomNavigation';
 import { useRecenterToUser, useVantiStore } from './store/vantiStore';
 import { ViewportProvider } from './lib/ViewportContext';
 import { WowExperienceLayer } from './components/WowExperienceLayer';
+import { SpatialAudioEngine } from './components/SpatialAudioEngine';
+import { FloatingRadarWidget } from './components/FloatingRadarWidget';
+import { VoiceSearchAssistant } from './components/VoiceSearchAssistant';
+import { ARExploreMode } from './components/ARExploreMode';
+import { MemoryTrailLayer } from './components/MemoryTrailLayer';
+import { ExportItineraryWidget } from './components/ExportItineraryWidget';
+import { AtmosphereFeed } from './components/AtmosphereFeed';
+import { PassportRewardsSystem } from './components/PassportRewardsSystem';
+import { JourneyRecapWidget } from './components/JourneyRecapWidget';
+import { TransitAlertSystem } from './components/TransitAlertSystem';
+import { PersistentTripCostWidget } from './components/PersistentTripCostWidget';
+import { LocalEventNotifier } from './components/LocalEventNotifier';
+import { ControlCluster } from './components/ControlCluster';
+import { LeftOperationsPanel } from './components/LeftOperationsPanel';
 
 const API_KEY =
   process.env.GOOGLE_MAPS_PLATFORM_KEY ||
@@ -38,6 +52,18 @@ export default function App() {
       <VantiGlobalShell bottomNavigation={<BottomNavigation />}>
         {mapElement}
         <WowExperienceLayer />
+        <SpatialAudioEngine />
+        <VoiceSearchAssistant />
+        <ARExploreMode />
+        <ExportItineraryWidget />
+        <AtmosphereFeed />
+        <PassportRewardsSystem />
+        <JourneyRecapWidget />
+        <TransitAlertSystem />
+        <PersistentTripCostWidget />
+        <LocalEventNotifier />
+        <ControlCluster />
+        <LeftOperationsPanel />
       </VantiGlobalShell>
     </ViewportProvider>
   );

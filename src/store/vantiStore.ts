@@ -2,6 +2,9 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { useEffect, useRef } from 'react';
 import { VantiMode } from '../types';
+import { auth, db } from '../lib/firebase';
+import { doc, setDoc } from 'firebase/firestore';
+import i18n from '../lib/i18n';
 
 export type MapAesthetic = 'none' | 'night' | 'contrast' | 'minimalist' | 'sepia' | 'cyberpunk' | 'retro-blueprint' | 'midnight-cyberpunk' | 'minimalist-paper' | 'terrain-focused';
 export type TravelMood = 'normal' | 'adventure' | 'relaxation' | 'culinary';
@@ -28,6 +31,26 @@ export interface VantiState {
   isInitializing: boolean;
   isAROpen: boolean;
   isChatbotOpen: boolean;
+  isAtmosphereOpen?: boolean;
+  isOperationsHubOpen?: boolean;
+  isSpatialAudioActive?: boolean;
+  isTransitAlertsActive?: boolean;
+  isRadarActive?: boolean;
+  isExportModalOpen?: boolean;
+  setIsExportModalOpen?: (isOpen: boolean) => void;
+  isLocalEventVisible?: boolean;
+  setIsLocalEventVisible?: (isVisible: boolean) => void;
+  isPassportOpen?: boolean;
+  setIsPassportOpen?: (isOpen: boolean) => void;
+  isJourneyRecapOpen?: boolean;
+  setIsJourneyRecapOpen?: (isOpen: boolean) => void;
+  isVoiceSearchVisible?: boolean;
+  setIsVoiceSearchVisible?: (isVisible: boolean) => void;
+  isFinanceTrackerVisible?: boolean;
+  setIsFinanceTrackerVisible?: (isVisible: boolean) => void;
+  isMapOverlayVisible?: boolean;
+  setIsMapOverlayVisible?: (isVisible: boolean) => void;
+  quickPin: (lat: number, lng: number) => void;
   units: 'metric' | 'imperial';
   mapStyle: 'streets' | 'satellite';
   mapAesthetic: MapAesthetic;
@@ -48,7 +71,37 @@ export interface VantiState {
   hiddenItinerarySegments: Record<string, boolean>;
   accessibilityScale: number;
   isPrefetchingEnabled: boolean;
+  isBatterySaverEnabled: boolean;
+  setIsBatterySaverEnabled: (enabled: boolean) => void;
+  isInsightsDrawerOpen: boolean;
+  setIsInsightsDrawerOpen: (isOpen: boolean) => void;
+  isSwitchingMode: boolean;
+  setIsSwitchingMode: (isSwitching: boolean) => void;
+  recentSearches: string[];
+  addRecentSearch: (term: string) => void;
+  tripStats: {
+    totalDistance: number; // in km
+    landmarksVisited: number;
+    weatherPreferences: Record<string, number>;
+  };
+  addVisitedLandmark: () => void;
+  updateTotalDistance: (dist: number) => void;
+  recordWeatherPreference: (condition: string) => void;
   currentWeatherData: any | null;
+  userLocation: google.maps.LatLngLiteral | null;
+  mapViewport: { center: { lat: number; lng: number }; bounds: { north: number; south: number; east: number; west: number } | null; zoom: number } | null;
+  viewportLandmarks: any[];
+  setViewportLandmarks: (landmarks: any[]) => void;
+  showAITripSidebar: boolean;
+  setShowAITripSidebar: (show: boolean) => void;
+  isGaussianActive: boolean;
+  setIsGaussianActive: (active: boolean) => void;
+  is3DActive: boolean;
+  setIs3DActive: (active: boolean) => void;
+  activeOverlays: string[];
+  addOverlay: (id: string) => void;
+  removeOverlay: (id: string) => void;
+  closeAllOverlays: () => void;
 }
 
 export interface VantiActions {
@@ -65,6 +118,18 @@ export interface VantiActions {
   setIsInitializing: (isInitializing: boolean) => void;
   setIsAROpen: (isOpen: boolean) => void;
   setIsChatbotOpen: (isOpen: boolean) => void;
+  setIsAtmosphereOpen?: (isOpen: boolean) => void;
+  setIsOperationsHubOpen?: (isOpen: boolean) => void;
+  setIsSpatialAudioActive?: (isActive: boolean) => void;
+  setIsTransitAlertsActive?: (isActive: boolean) => void;
+  setIsRadarActive?: (isActive: boolean) => void;
+  setIsExportModalOpen?: (isOpen: boolean) => void;
+  setIsLocalEventVisible?: (isVisible: boolean) => void;
+  setIsPassportOpen?: (isOpen: boolean) => void;
+  setIsJourneyRecapOpen?: (isOpen: boolean) => void;
+  setIsVoiceSearchVisible?: (isVisible: boolean) => void;
+  setIsFinanceTrackerVisible?: (isVisible: boolean) => void;
+  setIsMapOverlayVisible?: (isVisible: boolean) => void;
   setUnits: (units: 'metric' | 'imperial') => void;
   setMapStyle: (mapStyle: 'streets' | 'satellite') => void;
   setMapAesthetic: (aesthetic: MapAesthetic) => void;
@@ -83,7 +148,9 @@ export interface VantiActions {
   toggleBookmark: (place: any) => void;
   addCustomMarker: (marker: CustomMarker) => void;
   removeCustomMarker: (id: string) => void;
+  setUserLocation: (loc: google.maps.LatLngLiteral | null) => void;
   setShowTripSidebar: (show: boolean) => void;
+  setShowAITripSidebar: (show: boolean) => void;
   setIsCinematicMode: (active: boolean) => void;
   setTravelMood: (mood: TravelMood) => void;
   setNotificationsEnabled: (enabled: boolean) => void;
@@ -92,60 +159,14 @@ export interface VantiActions {
   setAccessibilityScale: (scale: number) => void;
   setIsPrefetchingEnabled: (enabled: boolean) => void;
   setCurrentWeatherData: (weather: any | null) => void;
+  setQuery: (query: string) => void;
+  setSimulatedRoutingCondition: (condition: string, active?: boolean) => void;
+  addRecentSearch: (term: string) => void;
+  setMapViewport: (viewport: { center: { lat: number; lng: number }; bounds: { north: number; south: number; east: number; west: number } | null; zoom: number } | null) => void;
+  setViewportLandmarks: (landmarks: any[]) => void;
 }
 
 type VantiStore = VantiState & VantiActions;
-
-const translations: Record<string, Record<string, string>> = {
-  en: {
-    'nav.explore': 'Explore',
-    'nav.route': 'Route',
-    'nav.planner': 'Planner',
-    'nav.config': 'Config',
-    'nav.profile': 'Profile',
-    'planner.title': 'Trip Planner',
-    'planner.subtitle': 'Design your perfect journey',
-    'planner.empty': 'No stops added yet. Select places on the map to start building your itinerary.',
-    'planner.summary': 'Route Summary',
-    'planner.distance': 'Total Distance',
-    'planner.duration': 'Est. Travel Time',
-    'planner.clear': 'Clear All',
-    'settings.title': 'Hyper-Settings',
-    'settings.language': 'Interface Language',
-    'settings.units': 'Measurement Units',
-    'settings.aesthetic': 'Map Aesthetic',
-    'settings.theme': 'Visual Theme',
-    'common.close': 'Close',
-    'common.km': 'km',
-    'common.mi': 'mi',
-    'common.min': 'min',
-    'common.hr': 'hr'
-  },
-  ko: {
-    'nav.explore': '탐색',
-    'nav.route': '경로',
-    'nav.planner': '플래너',
-    'nav.config': '설정',
-    'nav.profile': '프로필',
-    'planner.title': '트립 플래너',
-    'planner.subtitle': '완벽한 여행을 설계하세요',
-    'planner.empty': '추가된 장소가 없습니다. 지도를 클릭하여 일정을 만들어보세요.',
-    'planner.summary': '경로 요약',
-    'planner.distance': '총 거리',
-    'planner.duration': '예상 소요 시간',
-    'planner.clear': '모두 삭제',
-    'settings.title': '하이퍼 설정',
-    'settings.language': '인터페이스 언어',
-    'settings.units': '측정 단위',
-    'settings.aesthetic': '지도 미학',
-    'settings.theme': '비주얼 테마',
-    'common.close': '닫기',
-    'common.km': 'km',
-    'common.mi': 'mi',
-    'common.min': '분',
-    'common.hr': '시간'
-  }
-};
 
 export const useVantiStore = create<VantiStore>()(
   persist(
@@ -173,6 +194,41 @@ export const useVantiStore = create<VantiStore>()(
       setIsInitializing: (isInitializing) => set({ isInitializing }),
       isAROpen: false,
       setIsAROpen: (isOpen) => set({ isAROpen: isOpen }),
+      isAtmosphereOpen: false,
+      setIsAtmosphereOpen: (isOpen) => set({ isAtmosphereOpen: isOpen }),
+      isOperationsHubOpen: false,
+      setIsOperationsHubOpen: (isOpen) => set({ isOperationsHubOpen: isOpen }),
+      isSpatialAudioActive: false,
+      setIsSpatialAudioActive: (isActive) => set({ isSpatialAudioActive: isActive }),
+      isTransitAlertsActive: true,
+      setIsTransitAlertsActive: (isActive) => set({ isTransitAlertsActive: isActive }),
+      isRadarActive: false,
+      setIsRadarActive: (isActive) => set({ isRadarActive: isActive }),
+      isExportModalOpen: false,
+      setIsExportModalOpen: (isOpen) => set({ isExportModalOpen: isOpen }),
+      isLocalEventVisible: true,
+      setIsLocalEventVisible: (isVisible) => set({ isLocalEventVisible: isVisible }),
+      isPassportOpen: false,
+      setIsPassportOpen: (isOpen) => set({ isPassportOpen: isOpen }),
+      isJourneyRecapOpen: false,
+      setIsJourneyRecapOpen: (isOpen) => set({ isJourneyRecapOpen: isOpen }),
+      isVoiceSearchVisible: false,
+      setIsVoiceSearchVisible: (isVisible) => set({ isVoiceSearchVisible: isVisible }),
+      isFinanceTrackerVisible: false,
+      setIsFinanceTrackerVisible: (isVisible) => set({ isFinanceTrackerVisible: isVisible }),
+      isMapOverlayVisible: false,
+      setIsMapOverlayVisible: (isVisible) => set({ isMapOverlayVisible: isVisible }),
+      quickPin: (lat, lng) => set((state) => {
+        const newPin = {
+          id: `pin-${Date.now()}`,
+          lat,
+          lng,
+          nickname: 'Memory Trail Pin',
+          note: `Pinned via quick-gesture at ${new Date().toLocaleTimeString()}`,
+          category: 'Memory Trail'
+        };
+        return { customMarkers: [...state.customMarkers, newPin] };
+      }),
       isChatbotOpen: false,
       setIsChatbotOpen: (isOpen) => set({ isChatbotOpen: isOpen }),
       units: 'metric',
@@ -182,7 +238,13 @@ export const useVantiStore = create<VantiStore>()(
       mapAesthetic: typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'night' : 'none',
       setMapAesthetic: (mapAesthetic) => set({ mapAesthetic }),
       language: (typeof navigator !== 'undefined' && navigator.language.startsWith('ko')) ? 'ko' : 'en',
-      setLanguage: (language) => set({ language }),
+      setLanguage: (language) => {
+        set({ language });
+        i18n.changeLanguage(language);
+        if (auth.currentUser) {
+          setDoc(doc(db, 'users', auth.currentUser.uid), { language }, { merge: true }).catch(console.error);
+        }
+      },
       itinerary: [],
       addToItinerary: (place) => set((state) => {
         if (state.itinerary.find(p => p.id === place.id)) return state;
@@ -199,10 +261,7 @@ export const useVantiStore = create<VantiStore>()(
         next.splice(endIndex, 0, removed);
         return { itinerary: next };
       }),
-      t: (key) => {
-        const lang = get().language;
-        return translations[lang]?.[key] || key;
-      },
+      t: (key) => i18n.t(key) as string,
       showWeatherLayer: false,
       weatherLayerType: 'precipitation',
       setShowWeatherLayer: (showWeatherLayer) => set({ showWeatherLayer }),
@@ -230,6 +289,36 @@ export const useVantiStore = create<VantiStore>()(
       }),
       showTripSidebar: false,
       setShowTripSidebar: (showTripSidebar) => set({ showTripSidebar }),
+      showAITripSidebar: false,
+      setShowAITripSidebar: (showAITripSidebar) => set({ showAITripSidebar }),
+      isGaussianActive: false,
+      setIsGaussianActive: (isGaussianActive) => set({ isGaussianActive }),
+      is3DActive: false,
+      setIs3DActive: (is3DActive) => set({ is3DActive }),
+      activeOverlays: [],
+      addOverlay: (id) => set((state) => ({ activeOverlays: state.activeOverlays.includes(id) ? state.activeOverlays : [...state.activeOverlays, id] })),
+      removeOverlay: (id) => set((state) => ({ activeOverlays: state.activeOverlays.filter(oid => oid !== id) })),
+      closeAllOverlays: () => {
+        const state = useVantiStore.getState();
+        // Close all known overlays
+        state.setIsOperationsHubOpen?.(false);
+        state.setIsAtmosphereOpen?.(false);
+        state.setIsAROpen(false);
+        state.setIsChatbotOpen(false);
+        state.setIsPassportOpen?.(false);
+        state.setIsJourneyRecapOpen?.(false);
+        state.setIsVoiceSearchVisible?.(false);
+        state.setIsFinanceTrackerVisible?.(false);
+        state.setIsMapOverlayVisible?.(false);
+        state.setShowTripSidebar(false);
+        state.setShowAITripSidebar(false);
+        state.setIsInsightsDrawerOpen?.(false);
+        set({ activeOverlays: [] });
+      },
+      mapViewport: null,
+      setMapViewport: (mapViewport) => set({ mapViewport }),
+      viewportLandmarks: [],
+      setViewportLandmarks: (viewportLandmarks) => set({ viewportLandmarks }),
       isCinematicMode: false,
       setIsCinematicMode: (isCinematicMode) => set({ isCinematicMode }),
       travelMood: 'normal',
@@ -248,8 +337,46 @@ export const useVantiStore = create<VantiStore>()(
       setAccessibilityScale: (accessibilityScale) => set({ accessibilityScale }),
       isPrefetchingEnabled: true,
       setIsPrefetchingEnabled: (isPrefetchingEnabled) => set({ isPrefetchingEnabled }),
+      isBatterySaverEnabled: false,
+      setIsBatterySaverEnabled: (isBatterySaverEnabled) => set({ isBatterySaverEnabled }),
+      isSwitchingMode: false,
+      setIsSwitchingMode: (isSwitchingMode) => set({ isSwitchingMode }),
+      isInsightsDrawerOpen: false,
+      setIsInsightsDrawerOpen: (isInsightsDrawerOpen) => set({ isInsightsDrawerOpen }),
+      recentSearches: [],
+      addRecentSearch: (term) => set((state) => {
+        const cleaned = term.trim();
+        if (!cleaned) return state;
+        const filtered = state.recentSearches.filter(t => t.toLowerCase() !== cleaned.toLowerCase());
+        return { recentSearches: [cleaned, ...filtered].slice(0, 5) };
+      }),
+      tripStats: {
+        totalDistance: 0,
+        landmarksVisited: 0,
+        weatherPreferences: {}
+      },
+      addVisitedLandmark: () => set((state) => ({
+        tripStats: { ...state.tripStats, landmarksVisited: state.tripStats.landmarksVisited + 1 }
+      })),
+      updateTotalDistance: (dist) => set((state) => ({
+        tripStats: { ...state.tripStats, totalDistance: state.tripStats.totalDistance + dist }
+      })),
+      recordWeatherPreference: (condition) => set((state) => {
+        const next = { ...state.tripStats.weatherPreferences };
+        next[condition] = (next[condition] || 0) + 1;
+        return { tripStats: { ...state.tripStats, weatherPreferences: next } };
+      }),
       currentWeatherData: null,
       setCurrentWeatherData: (currentWeatherData) => set({ currentWeatherData }),
+      userLocation: null,
+      setUserLocation: (userLocation) => set({ userLocation }),
+      setQuery: (query) => {
+        // Typically triggers a search or filter
+        console.log("Setting global search query:", query);
+      },
+      setSimulatedRoutingCondition: (condition, active) => {
+        console.log("Setting simulated routing condition:", condition, active);
+      }
     }),
     {
       name: 'vanti-storage',
@@ -263,10 +390,13 @@ export const useVantiStore = create<VantiStore>()(
         language: state.language,
         itinerary: state.itinerary,
         showTripSidebar: state.showTripSidebar,
+        showAITripSidebar: state.showAITripSidebar,
         areNotificationsEnabled: state.areNotificationsEnabled,
         hiddenItinerarySegments: state.hiddenItinerarySegments,
         accessibilityScale: state.accessibilityScale,
-        isPrefetchingEnabled: state.isPrefetchingEnabled
+        isPrefetchingEnabled: state.isPrefetchingEnabled,
+        tripStats: state.tripStats,
+        recentSearches: state.recentSearches
       }),
     }
   )

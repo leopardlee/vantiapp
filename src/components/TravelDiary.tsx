@@ -233,6 +233,9 @@ export default function TravelDiary({
           snapshot.forEach(d => grps.push({ id: d.id, ...d.data() }));
           setGroupTrips(grps);
           setLoading(false);
+        }, (error) => {
+          handleFirestoreError(error, OperationType.LIST, 'groupTrips');
+          setLoading(false);
         });
       } else {
         // Load polls
@@ -242,17 +245,22 @@ export default function TravelDiary({
           const p: any[] = [];
           snapshot.forEach(d => p.push({ id: d.id, ...d.data() }));
           setPolls(p);
+        }, (error) => {
+          handleFirestoreError(error, OperationType.LIST, pollsPath);
         });
 
         // Load feed for specific group
-        const path = `groupTrips/${selectedGroupId}/snapshots`;
-        const qSnapshot = query(collection(db, path), orderBy('createdAt', 'desc'));
+        const snapshotsPath = `groupTrips/${selectedGroupId}/snapshots`;
+        const qSnapshot = query(collection(db, snapshotsPath), orderBy('createdAt', 'desc'));
         unsubFeed = onSnapshot(qSnapshot, (snapshot) => {
           const sn: any[] = [];
           snapshot.forEach(doc => {
             sn.push({ id: doc.id, ...doc.data() });
           });
           setFeed(sn);
+          setLoading(false);
+        }, (error) => {
+          handleFirestoreError(error, OperationType.LIST, snapshotsPath);
           setLoading(false);
         });
       }

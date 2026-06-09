@@ -1,10 +1,17 @@
 import React, { ReactNode, useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useVantiStore } from '../store/vantiStore';
-import { Compass, ShieldAlert, Cpu, Database, Wifi, CloudOff, Cloud, Check, Route } from 'lucide-react';
+import { useThemeManager } from '../hooks/useThemeManager';
+import { useAdaptiveScaling } from '../hooks/useAdaptiveScaling';
+import { useSwipe } from '../hooks/useSwipe';
+import { Compass, ShieldAlert, Cpu, Database, Wifi, CloudOff, Cloud, Check, Route, Sparkles } from 'lucide-react';
 import { subscribeToCloudStatus } from '../lib/firebase';
 import { MyTripSidebar } from './MyTripSidebar';
+import { AITravelPlannerSidebar } from './AITravelPlannerSidebar';
+import { TravelInsightsDrawer } from './TravelInsightsDrawer';
+import { GaussianSplatOverlay } from './GaussianSplatOverlay';
 import { cn } from '../lib/utils';
+import { BarChart3 } from 'lucide-react';
 
 interface VantiGlobalShellProps {
   children: ReactNode;
@@ -13,12 +20,57 @@ interface VantiGlobalShellProps {
 
 export function VantiGlobalShell({ children, bottomNavigation }: VantiGlobalShellProps) {
   const isInitializing = useVantiStore((state) => state.isInitializing);
+  const { isDarkMode, timePhase } = useThemeManager();
   const [activeStep, setActiveStep] = useState(0);
   const [cloudStatus, setCloudStatus] = useState<boolean | 'loading'>('loading');
   
   const itineraryCount = useVantiStore((state) => state.itinerary.length);
   const showTripSidebar = useVantiStore((state) => state.showTripSidebar);
   const setShowTripSidebar = useVantiStore((state) => state.setShowTripSidebar);
+  const showAITripSidebar = useVantiStore((state) => state.showAITripSidebar);
+  const setShowAITripSidebar = useVantiStore((state) => state.setShowAITripSidebar);
+  const isInsightsDrawerOpen = useVantiStore((state) => state.isInsightsDrawerOpen);
+  const setIsInsightsDrawerOpen = useVantiStore((state) => state.setIsInsightsDrawerOpen);
+  const isSwitchingMode = useVantiStore((state) => state.isSwitchingMode);
+  const activeMode = useVantiStore((state) => state.activeMode);
+  const closeAllOverlays = useVantiStore((state) => state.closeAllOverlays);
+
+  const isOperationsHubOpen = useVantiStore((state) => state.isOperationsHubOpen);
+  const setIsOperationsHubOpen = useVantiStore((state) => state.setIsOperationsHubOpen!);
+  
+  const isAROpen = useVantiStore((state) => state.isAROpen);
+  const setIsAROpen = useVantiStore((state) => state.setIsAROpen);
+  
+  const isAtmosphereOpen = useVantiStore((state) => state.isAtmosphereOpen);
+  const setIsAtmosphereOpen = useVantiStore((state) => state.setIsAtmosphereOpen!);
+
+  useAdaptiveScaling();
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        closeAllOverlays();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [closeAllOverlays]);
+
+  useSwipe({
+    edgeThreshold: 40,
+    onSwipeRight: () => {
+      // Swiping right from left edge triggers Operations Hub
+      setIsOperationsHubOpen(!isOperationsHubOpen);
+    },
+    onSwipeUp: () => {
+      // Swipe up for AR Lens
+      if (!isAROpen) setIsAROpen(true);
+    },
+    onSwipeDown: () => {
+      // Swipe down for Atmosphere
+      if (!isAtmosphereOpen) setIsAtmosphereOpen(true);
+    }
+  });
 
   useEffect(() => {
     return subscribeToCloudStatus((connected) => {
@@ -44,8 +96,22 @@ export function VantiGlobalShell({ children, bottomNavigation }: VantiGlobalShel
 
   const CurrentStepIcon = steps[activeStep].icon;
 
+  const getPhaseBg = () => {
+    switch (timePhase) {
+      case 'dawn': return 'bg-[#fdf4ff]';
+      case 'day': return 'bg-[#e2e8f0]';
+      case 'dusk': return 'bg-[#1a0b36]';
+      case 'night':
+      default: return 'bg-[#0a0c10]';
+    }
+  };
+
   return (
-    <div className="relative h-screen w-full overflow-hidden bg-[#0a0c10] flex flex-col items-stretch pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]">
+    <div className={cn("relative h-screen w-full flex flex-col items-stretch pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] transition-colors duration-1000 overflow-hidden", getPhaseBg())}>
+      {/* Cinematic Vignette & Grain */}
+      <div className="absolute inset-0 pointer-events-none z-[120] shadow-[inset_0_0_150px_rgba(0,0,0,0.35)] mix-blend-multiply" />
+      <div className="absolute inset-0 pointer-events-none z-[120] opacity-[0.03]" style={{ backgroundImage: 'url("data:image/svg+xml,%3Csvg viewBox=%220 0 200 200%22 xmlns=%22http://www.w3.org/2000/svg%22%3E%3Cfilter id=%22noiseFilter%22%3E%3CfeTurbulence type=%22fractalNoise%22 baseFrequency=%220.65%22 numOctaves=%223%22 stitchTiles=%22stitch%22/%3E%3C/filter%3E%3Crect width=%22100%25%22 height=%22100%25%22 filter=%22url(%23noiseFilter)%22/%3E%3C/svg%3E")' }} />
+
       {/* Custom Styles for Shimmer and Slowly Rotating Rings */}
       <style dangerouslySetInnerHTML={{ __html: `
         @keyframes vanti-shimmer {
@@ -73,8 +139,56 @@ export function VantiGlobalShell({ children, bottomNavigation }: VantiGlobalShel
 
       {/* Persistent Base Layer for Map */}
       <div className="absolute inset-0 z-0 overflow-hidden">
-        {children}
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={activeMode}
+            initial={{ opacity: 0, x: 20, filter: 'blur(10px)' }}
+            animate={{ opacity: 1, x: 0, filter: 'blur(0px)' }}
+            exit={{ opacity: 0, x: -20, filter: 'blur(10px)' }}
+            transition={{ 
+              duration: 0.45, 
+              ease: [0.23, 1, 0.32, 1] 
+            }}
+            className="absolute inset-0"
+          >
+            {children}
+          </motion.div>
+        </AnimatePresence>
       </div>
+
+      {/* Switching/Loading Skeleton Overlay */}
+      <AnimatePresence>
+        {isSwitchingMode && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="absolute inset-0 z-[180] bg-[#0c0e12]/30 backdrop-blur-md flex flex-col items-center justify-center pointer-events-auto"
+          >
+            <div className="relative">
+              <div className="w-32 h-32 rounded-full border border-white/5 vanti-radar-glow" />
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
+                 <motion.div 
+                   animate={{ rotate: 360 }}
+                   transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+                   className="w-8 h-8 rounded-full border-2 border-slate-500 border-t-rose-500"
+                 />
+                 <span className="text-[9px] font-black tracking-widest text-white/40 uppercase">Syncing Nodes</span>
+              </div>
+            </div>
+            {/* Subtle skeleton shapes appearing over the map area */}
+            <div className="absolute inset-0 pointer-events-none opacity-20 overflow-hidden">
+               <motion.div 
+                 initial={{ scale: 0.9, opacity: 0 }}
+                 animate={{ scale: 1, opacity: 1 }}
+                 className="absolute top-1/4 left-1/4 w-1/2 h-1/2 rounded-full bg-rose-500/10 blur-[100px]" 
+               />
+               <div className="absolute top-[20%] left-[10%] w-32 h-40 bg-white/5 rounded-2xl animate-pulse" />
+               <div className="absolute bottom-[30%] right-[15%] w-48 h-32 bg-white/5 rounded-2xl animate-pulse" />
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Interactive Telemetry Loading Skeleton Screen (Z-index: 200) */}
       <AnimatePresence>
@@ -126,23 +240,55 @@ export function VantiGlobalShell({ children, bottomNavigation }: VantiGlobalShel
 
                 {/* HUD Toggle for My Trip Sidebar */}
                 {!isInitializing && (
-                  <motion.button
-                    initial={{ opacity: 0, x: 20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ type: 'spring', damping: 15, stiffness: 200 }}
-                    whileHover={{ scale: 1.05 }}
-                    whileTap={{ scale: 0.95 }}
-                    onClick={() => setShowTripSidebar(!showTripSidebar)}
-                    className={cn(
-                      "px-4 py-2 rounded-2xl border transition-all flex items-center gap-2 pointer-events-auto shadow-lg",
-                      showTripSidebar 
-                        ? "bg-rose-500 border-rose-400 text-white shadow-rose-900/40" 
-                        : "bg-[#121620]/80 border-white/10 text-slate-400 hover:text-white hover:border-white/20"
-                    )}
-                  >
-                    <Route className="w-3.5 h-3.5" />
-                    <span className="text-[10px] font-black uppercase tracking-widest">My Trip ({itineraryCount})</span>
-                  </motion.button>
+                  <div className="flex items-center gap-2">
+                    <motion.button
+                      initial={{ opacity: 0, x: 20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ type: 'spring', damping: 15, stiffness: 200, delay: 0.1 }}
+                      whileHover={{ scale: 1.05 }}
+                      whileTap={{ scale: 0.95 }}
+                      onClick={() => setIsInsightsDrawerOpen(true)}
+                      className="px-3 py-2 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 hover:bg-indigo-500 hover:text-white transition-all pointer-events-auto"
+                    >
+                      <BarChart3 className="w-3.5 h-3.5" />
+                    </motion.button>
+                    
+                    <motion.button
+                      initial={{ opacity: 0, x: 20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ type: 'spring', damping: 15, stiffness: 200 }}
+                      whileHover={{ scale: 1.05 }}
+                      whileTap={{ scale: 0.95 }}
+                      onClick={() => setShowTripSidebar(!showTripSidebar)}
+                      className={cn(
+                        "px-4 py-2 rounded-2xl border transition-all flex items-center gap-2 pointer-events-auto shadow-lg",
+                        showTripSidebar 
+                          ? "bg-rose-500 border-rose-400 text-white shadow-rose-900/40" 
+                          : "bg-[#121620]/80 border-white/10 text-slate-400 hover:text-white hover:border-white/20"
+                      )}
+                    >
+                      <Route className="w-3.5 h-3.5" />
+                      <span className="text-[10px] font-black uppercase tracking-widest">My Trip ({itineraryCount})</span>
+                    </motion.button>
+
+                    <motion.button
+                      initial={{ opacity: 0, x: 20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ type: 'spring', damping: 15, stiffness: 200, delay: 0.05 }}
+                      whileHover={{ scale: 1.05 }}
+                      whileTap={{ scale: 0.95 }}
+                      onClick={() => setShowAITripSidebar(!showAITripSidebar)}
+                      className={cn(
+                        "px-4 py-2 rounded-2xl border transition-all flex items-center gap-2 pointer-events-auto shadow-lg",
+                        showAITripSidebar 
+                          ? "bg-purple-600 border-purple-400 text-white shadow-purple-900/40" 
+                          : "bg-[#121620]/80 border-white/10 text-slate-400 hover:text-white hover:border-white/20"
+                      )}
+                    >
+                      <Sparkles className="w-3.5 h-3.5" />
+                      <span className="text-[10px] font-black uppercase tracking-widest">AI Planner</span>
+                    </motion.button>
+                  </div>
                 )}
               </div>
             </div>
@@ -264,6 +410,14 @@ export function VantiGlobalShell({ children, bottomNavigation }: VantiGlobalShel
       <MyTripSidebar 
         isOpen={showTripSidebar} 
         onClose={() => setShowTripSidebar(false)} 
+      />
+
+      <AITravelPlannerSidebar />
+      <GaussianSplatOverlay />
+
+      <TravelInsightsDrawer
+        isOpen={isInsightsDrawerOpen}
+        onClose={() => setIsInsightsDrawerOpen(false)}
       />
     </div>
   );

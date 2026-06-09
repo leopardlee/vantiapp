@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Settings, X, Shield, Globe, Ruler, Map, Check, LogIn, AlertCircle, Cpu, Terminal, Palette, Cloud, Bell, BellOff, Zap, BookOpen, History as HistoryIcon } from 'lucide-react';
+import { Settings, Shield, Globe, Ruler, Map, Check, LogIn, AlertCircle, Cpu, Terminal, Palette, Cloud, Bell, BellOff, Zap, BookOpen, History as HistoryIcon } from 'lucide-react';
+import { CloseButton } from './CloseButton';
 import FocusLock from 'react-focus-lock';
 import { useVantiStore } from '../store/vantiStore';
 import { cn } from '../lib/utils';
@@ -123,12 +124,7 @@ export default function SettingsModal({
                 </div>
               </div>
 
-              <button
-                onClick={onClose}
-                className="w-8 h-8 rounded-xl bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition-all flex items-center justify-center active:scale-95"
-              >
-                <X className="w-4 h-4" />
-              </button>
+              <CloseButton onClick={onClose} />
             </div>
 
             {/* Content info */}
@@ -337,6 +333,39 @@ export default function SettingsModal({
                     {language === 'en' ? 'Disabled' : '사용 안 함'}
                   </button>
                 </div>
+              </div>
+
+              {/* Battery Saver Option */}
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 px-1">
+                  <Zap className="w-4 h-4 text-yellow-400" />
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{t('settings.batterySaver')}</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2 bg-[#0c0f16]/90 p-1.5 rounded-2xl border border-white/5">
+                  <button
+                    onClick={() => useVantiStore.getState().setIsBatterySaverEnabled(true)}
+                    className={`py-3 px-4 rounded-xl text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2 ${
+                      useVantiStore.getState().isBatterySaverEnabled
+                        ? 'bg-yellow-600 text-white shadow-lg shadow-yellow-950/40 font-black'
+                        : 'bg-transparent text-slate-500 hover:text-slate-300'
+                    }`}
+                  >
+                    {useVantiStore.getState().isBatterySaverEnabled && <Check className="w-3.5 h-3.5 stroke-[2.5]" />}
+                    {language === 'en' ? 'On' : '켬'}
+                  </button>
+                  <button
+                    onClick={() => useVantiStore.getState().setIsBatterySaverEnabled(false)}
+                    className={`py-3 px-4 rounded-xl text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2 ${
+                      !useVantiStore.getState().isBatterySaverEnabled
+                        ? 'bg-yellow-600 text-white shadow-lg shadow-yellow-950/40 font-black'
+                        : 'bg-transparent text-slate-500 hover:text-slate-300'
+                    }`}
+                  >
+                    {!useVantiStore.getState().isBatterySaverEnabled && <Check className="w-3.5 h-3.5 stroke-[2.5]" />}
+                    {language === 'en' ? 'Off' : '끔'}
+                  </button>
+                </div>
+                <p className="px-2 text-[9px] text-slate-500 font-medium">{t('settings.batterySaverDesc')}</p>
               </div>
 
               {/* Transit Alerts Option */}

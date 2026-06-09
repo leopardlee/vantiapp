@@ -21,10 +21,25 @@ import {
   EyeOff
 } from 'lucide-react';
 import { cn } from '../lib/utils';
+import { CloseButton } from './CloseButton';
+
+import { useResponsiveLayout } from '../hooks/useResponsiveLayout';
 
 export function MyTripSidebar({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
+  const { isNarrow } = useResponsiveLayout();
   const itinerary = useVantiStore((state) => state.itinerary);
   const hiddenItinerarySegments = useVantiStore((state) => state.hiddenItinerarySegments);
+  const addOverlay = useVantiStore((state) => state.addOverlay);
+  const removeOverlay = useVantiStore((state) => state.removeOverlay);
+
+  React.useEffect(() => {
+    if (isOpen) {
+      addOverlay('trip_sidebar');
+    } else {
+      removeOverlay('trip_sidebar');
+    }
+  }, [isOpen]);
+
   const toggleItinerarySegment = useVantiStore((state) => state.toggleItinerarySegment);
   const removeFromItinerary = useVantiStore((state) => state.removeFromItinerary);
   const reorderItinerary = useVantiStore((state) => state.reorderItinerary);
@@ -149,12 +164,24 @@ export function MyTripSidebar({ isOpen, onClose }: { isOpen: boolean; onClose: (
           />
           
           <motion.div
-            initial={{ x: '100%' }}
-            animate={{ x: 0 }}
-            exit={{ x: '100%' }}
+            initial={isNarrow ? { y: '100%', x: 0 } : { x: '100%', y: 0 }}
+            animate={isNarrow ? { y: 0, x: 0 } : { x: 0, y: 0 }}
+            exit={isNarrow ? { y: '100%', x: 0 } : { x: '100%', y: 0 }}
             transition={{ type: 'spring', damping: 26, stiffness: 210 }}
-            className="fixed top-0 right-0 h-full w-full md:w-[390px] bg-[#0c0e12]/95 backdrop-blur-2xl border-l border-white/10 z-[190] flex flex-col shadow-[0_0_50px_rgba(0,0,0,0.8)] pointer-events-auto"
+            className={cn(
+              "fixed bg-[#0c0e12]/95 backdrop-blur-2xl border-white/10 z-[190] flex flex-col shadow-[0_0_50px_rgba(0,0,0,0.8)] pointer-events-auto",
+              isNarrow 
+                ? "bottom-0 left-0 right-0 h-[80vh] w-full rounded-t-[32px] border-t" 
+                : "top-0 right-0 h-full w-full md:w-[390px] border-l"
+            )}
           >
+            {/* Drag Handle for Bottom Sheet on mobile */}
+            {isNarrow && (
+              <div className="w-full flex justify-center pt-3 pb-1">
+                <div className="w-12 h-1.5 bg-white/10 rounded-full" />
+              </div>
+            )}
+
             {/* Header */}
             <div className="p-6 border-b border-white/5 flex items-center justify-between bg-white/[0.01]">
               <div>
@@ -165,10 +192,12 @@ export function MyTripSidebar({ isOpen, onClose }: { isOpen: boolean; onClose: (
                 <p className="text-xs text-slate-500 mt-1">{t('planner.subtitle')}</p>
               </div>
               <div className="flex items-center gap-2">
-                <button
+                <motion.button
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
                   onClick={() => setShowAddForm(!showAddForm)}
                   className={cn(
-                    "p-2.5 rounded-xl border transition-all active:scale-95 flex items-center gap-1 text-xs font-bold uppercase tracking-wider",
+                    "p-2.5 rounded-xl border transition-all flex items-center gap-1 text-xs font-bold uppercase tracking-wider",
                     showAddForm 
                       ? "bg-slate-800 text-white border-slate-700" 
                       : "bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border-rose-500/20"
@@ -176,13 +205,8 @@ export function MyTripSidebar({ isOpen, onClose }: { isOpen: boolean; onClose: (
                   title="Add Custom Stop"
                 >
                   <Plus className="w-4 h-4" />
-                </button>
-                <button 
-                  onClick={onClose}
-                  className="p-2.5 rounded-xl hover:bg-white/5 text-slate-400 hover:text-white transition-all border border-transparent hover:border-white/5"
-                >
-                  <X className="w-5 h-5" />
-                </button>
+                </motion.button>
+                <CloseButton onClick={onClose} isAbsolute={false} className="border-white/5" />
               </div>
             </div>
 

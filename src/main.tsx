@@ -2,6 +2,7 @@ import {StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
+import './lib/i18n';
 
 // Intercept and ignore benign Vite WebSocket/HMR connection rejections in the dev environment
 if (typeof window !== 'undefined') {

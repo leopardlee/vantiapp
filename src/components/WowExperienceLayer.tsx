@@ -4,12 +4,48 @@ import { Sparkles, Navigation, Globe } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useVantiStore } from '../store/vantiStore';
 
+import { StatusIndicator } from './StatusIndicator';
+
 export function WowExperienceLayer() {
   const [mousePos, setMousePos] = useState({ x: -1000, y: -1000 });
   const [isMagicLensActive, setIsMagicLensActive] = useState(false);
   const layerRef = useRef<HTMLDivElement>(null);
   
+  const currentWeatherData = useVantiStore(state => state.currentWeatherData);
+  const isBatterySaverEnabled = useVantiStore(state => state.isBatterySaverEnabled);
+  const language = useVantiStore(state => state.language);
+  
+  // Weather to visual effect mapping
+  const weatherEffects = React.useMemo(() => {
+    if (!currentWeatherData || isBatterySaverEnabled) return { overlay: '', blur: '' };
+    
+    const condition = (currentWeatherData.main || '').toLowerCase();
+    
+    switch (condition) {
+      case 'clear':
+        return { overlay: 'bg-amber-500/5 mix-blend-overlay', blur: '' };
+      case 'clouds':
+        return { overlay: 'bg-slate-400/5 mix-blend-overlay', blur: '' };
+      case 'rain':
+      case 'drizzle':
+        return { overlay: 'bg-blue-900/10 mix-blend-multiply', blur: '' };
+      case 'snow':
+        return { overlay: 'bg-white/10 mix-blend-screen', blur: '' };
+      case 'thunderstorm':
+        return { overlay: 'bg-purple-900/10 mix-blend-multiply animate-pulse', blur: '' };
+      case 'mist':
+      case 'smoke':
+      case 'haze':
+      case 'dust':
+      case 'fog':
+        return { overlay: 'bg-gray-300/10 mix-blend-overlay', blur: '' };
+      default:
+        return { overlay: '', blur: '' };
+    }
+  }, [currentWeatherData]);
+  
   useEffect(() => {
+    if (isBatterySaverEnabled) return;
     const handleMouseMove = (e: MouseEvent) => {
       setMousePos({ x: e.clientX, y: e.clientY });
       
@@ -32,15 +68,22 @@ export function WowExperienceLayer() {
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, []);
+  }, [isBatterySaverEnabled]);
+
+  if (isBatterySaverEnabled) return null;
 
   return (
     <div 
       ref={layerRef} 
-      className="absolute inset-0 pointer-events-none z-[100] overflow-hidden"
+      className={cn("absolute inset-0 pointer-events-none z-[100] overflow-hidden transition-all duration-1000", weatherEffects.blur)}
     >
+      {/* Realtime Weather Overlay Effect */}
+      {weatherEffects.overlay && (
+        <div className={cn("absolute inset-0 transition-opacity duration-1000 pointer-events-none", weatherEffects.overlay)} />
+      )}
+
       {/* 1. Cinematic Glass Vignette */}
-      <div className="absolute inset-0 glass-vignette opacity-70" />
+      <div className="absolute inset-0 glass-vignette opacity-20" />
 
       {/* 2. Cyberpunk Scanline */}
       <div className="absolute top-0 left-0 right-0 h-32 bg-gradient-to-b from-transparent via-indigo-500/10 to-transparent animate-wow-scanline opacity-30 mix-blend-screen" />
@@ -79,24 +122,49 @@ export function WowExperienceLayer() {
         )}
       </AnimatePresence>
 
-      {/* 5. Dynamic Island / Top Notification Hub */}
-      <div className="absolute top-6 left-1/2 -translate-x-1/2 flex justify-center pointer-events-auto">
-        <motion.div 
-          initial={{ y: -50, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          transition={{ type: "spring", stiffness: 300, damping: 20, delay: 1 }}
-          className="glass-lens rounded-full py-2 px-4 flex items-center gap-3 animate-wow-float"
-        >
-          <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse-slow shadow-[0_0_10px_rgba(52,211,153,0.8)]" />
-          <span className="text-[10px] font-mono tracking-widest font-black uppercase text-white/90">
-            Neuro-Link Active
-          </span>
-          <div className="w-[1px] h-3 bg-white/20 mx-1" />
-          <div className="flex items-center gap-1.5 text-xs text-white/60">
-             <span className="opacity-0 group-hover:opacity-100 transition-opacity">Press 'M' for Magic Lens</span>
-             <Sparkles className="w-3 h-3 text-indigo-400" />
-          </div>
-        </motion.div>
+      {/* 5. System Status HUD - Minimized to Dots per User Request */}
+      <div className="absolute top-6 left-1/2 -translate-x-1/2 flex items-center gap-6 pointer-events-auto z-[200]">
+        <StatusIndicator 
+          id="neural-link"
+          label="Link Stable"
+          dotColor="emerald"
+          icon={Globe}
+          tooltipTitle="Neural Link Status"
+          tooltipDescription="System synchronization is robust. Your neural link to the Vanti data grid is established and optimized for real-time spatial processing."
+          metrics={[
+            { label: 'Latency', value: '0.04ms' },
+            { label: 'Sync Rate', value: '1.2GB/s' },
+            { label: 'Security', value: 'Quantum-Safe' }
+          ]}
+        />
+
+        <StatusIndicator 
+          id="gps-lock"
+          label="GPS Locked"
+          dotColor="cyan"
+          icon={Navigation}
+          tooltipTitle="Satellite Precision"
+          tooltipDescription="Orbital triangulation active. Current position accuracy is within 0.1 meters via high-density constellation link."
+          metrics={[
+            { label: 'Satellites', value: '32 Active' },
+            { label: 'Precision', value: '±0.1m' },
+            { label: 'Datum', value: 'WGS84-V' }
+          ]}
+        />
+
+        <StatusIndicator 
+          id="network-grid"
+          label="Grid Active"
+          dotColor="indigo"
+          icon={Sparkles}
+          tooltipTitle="Vanti Data Grid"
+          tooltipDescription="Connected to the global Vanti Mesh. Map tiles and real-time transit telemetry are synchronized via distributed edge nodes."
+          metrics={[
+            { label: 'Node', value: 'VANTI-ASIA-01' },
+            { label: 'Bandwidth', value: 'Unlimited' },
+            { label: 'Packets', value: 'Zero Drop' }
+          ]}
+        />
       </div>
       
       {/* 6. Mouse Aura Follower */}

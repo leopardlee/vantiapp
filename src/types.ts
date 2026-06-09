@@ -1,4 +1,4 @@
-export type VantiMode = 'all' | 'social' | 'genius' | 'perks' | 'profile' | 'canada' | 'planner';
+export type VantiMode = 'all' | 'social' | 'genius' | 'perks' | 'profile' | 'canada' | 'planner' | 'flythrough';
 
 export interface ViewportLocation {
   center: google.maps.LatLngLiteral;

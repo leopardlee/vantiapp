@@ -311,6 +311,8 @@ const PlaceDetailsPanel = React.memo(function PlaceDetailsPanel({ place, onBack,
         setVisitedNote(found.text);
         setVisitedImage(found.imageUrl || '');
       }
+    }, (error) => {
+      console.warn("PlaceDetailsPanel Snapshots error", error);
     });
     return () => unsub();
   }, [user, place]);

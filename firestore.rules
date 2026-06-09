@@ -58,6 +58,25 @@ service cloud.firestore {
         && (!('imageUrl' in data) || (data.imageUrl is string && data.imageUrl.size() <= 500));
     }
 
+    function isValidMemoryTrailPin(data) {
+       return data.lat is number && data.lng is number && data.timestamp is number;
+    }
+
+    function isValidPassportStamp(data) {
+      return data.landmarkId is string && data.landmarkId.size() <= 128
+        && data.name is string && data.name.size() <= 200
+        && data.timestamp is number;
+    }
+
+    function isValidAtmosphereMood(data) {
+      return data.userId is string && data.userId == request.auth.uid
+        && data.emoji is string && data.emoji.size() <= 10
+        && data.text is string && data.text.size() <= 200
+        && data.lat is number
+        && data.lng is number
+        && data.timestamp is number;
+    }
+
     function isValidTravelSnapshot(data) {
       return data.userId is string && data.userId.size() <= 128
         && data.userId == request.auth.uid // Anti-spoofing identity verification
@@ -68,7 +87,8 @@ service cloud.firestore {
         && (!('imageUrl' in data) || (data.imageUrl is string && data.imageUrl.size() <= 500))
         && (!('lat' in data) || (data.lat is number))
         && (!('lng' in data) || (data.lng is number))
-        && (data.createdAt is number);
+        && (data.createdAt is number)
+        && (!('reactions' in data) || (data.reactions is map));
     }
 
     function isValidGroupTrip(data) {
@@ -79,9 +99,17 @@ service cloud.firestore {
         && data.createdAt is number;
     }
 
+    function isValidPoll(data) {
+      return data.question is string && data.question.size() <= 200
+        && data.options is list && data.options.size() >= 2 && data.options.size() <= 10
+        && data.votes is map
+        && data.createdBy is string && data.createdBy == request.auth.uid
+        && data.createdAt is number;
+    }
+
     function isParticipantOfTrip(tripId) {
-      let trip = get(/databases/$(database)/documents/groupTrips/$(tripId)).data;
-      return request.auth.uid == trip.ownerId || request.auth.token.email in trip.participantEmails;
+      let trip = get(/databases/$(database)/documents/groupTrips/$(tripId));
+      return trip != null && (request.auth.uid == trip.data.ownerId || request.auth.token.email in trip.data.participantEmails);
     }
 
     function isValidItinerary(data) {
@@ -131,6 +159,18 @@ service cloud.firestore {
         allow create: if isSignedIn() && request.auth.uid == userId && isValidId(messageId) && isValidChatMessage(incoming());
         allow update, delete: if false;
       }
+
+      match /memoryTrail/{pinId} {
+        allow read: if isSignedIn() && request.auth.uid == userId;
+        allow create, update: if isSignedIn() && request.auth.uid == userId && isValidId(pinId) && isValidMemoryTrailPin(incoming());
+        allow delete: if isSignedIn() && request.auth.uid == userId && isValidId(pinId);
+      }
+
+      match /passportStamps/{stampId} {
+        allow read: if isSignedIn() && request.auth.uid == userId;
+        allow create, update: if isSignedIn() && request.auth.uid == userId && isValidId(stampId) && isValidPassportStamp(incoming());
+        allow delete: if isSignedIn() && request.auth.uid == userId && isValidId(stampId);
+      }
     }
 
     match /userLocations/{userId} {
@@ -145,6 +185,13 @@ service cloud.firestore {
         && incoming().userId == existing().userId
         && incoming().createdAt == existing().createdAt;
       allow delete: if isSignedIn() && isValidId(snapshotId) && existing().userId == request.auth.uid;
+    }
+
+    match /atmosphereMoods/{moodId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && isValidId(moodId) && isValidAtmosphereMood(incoming());
+      allow update: if false;
+      allow delete: if isSignedIn() && existing().userId == request.auth.uid;
     }
 
     match /groupTrips/{tripId} {
@@ -166,6 +213,20 @@ service cloud.firestore {
           && isParticipantOfTrip(tripId);
         allow delete: if isSignedIn() && isValidId(snapshotId) && existing().userId == request.auth.uid;
       }
+
+      match /polls/{pollId} {
+        allow read: if isSignedIn() && isParticipantOfTrip(tripId);
+        allow create: if isSignedIn() && isValidId(pollId) && isValidPoll(incoming()) && isParticipantOfTrip(tripId);
+        allow update: if isSignedIn() && isValidId(pollId) && isParticipantOfTrip(tripId)
+          && incoming().question == existing().question
+          && incoming().options == existing().options
+          && incoming().createdBy == existing().createdBy;
+        allow delete: if isSignedIn() && isValidId(pollId) && (existing().createdBy == request.auth.uid || isParticipantOfTrip(tripId));
+      }
+    }
+
+    match /_vanti_health/{id} {
+      allow read: if true;
     }
   }
 }
