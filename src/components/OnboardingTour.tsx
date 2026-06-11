@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Sparkles, ChevronRight, X, Compass, Search, Navigation, Users, Layers, Star } from 'lucide-react';
+import { Sparkles, ChevronRight, X, Compass, Search, Navigation, Users, Layers, Star, Camera, Check, Upload } from 'lucide-react';
 import { cn } from '../lib/utils';
+import { useVantiStore } from '../store/vantiStore';
 
 interface TourStep {
   targetId: string;
@@ -49,10 +50,28 @@ const TOUR_STEPS: TourStep[] = [
   }
 ];
 
+const PRESET_AVATARS = [
+  'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80',
+  'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?auto=format&fit=crop&w=150&q=80',
+  'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=150&q=80',
+  'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=150&q=80'
+];
+
 export const OnboardingTour: React.FC = () => {
-  const [currentStep, setCurrentStep] = useState<number>(-1); // -1 means welcome screen
+  const [currentStep, setCurrentStep] = useState<number>(-1); // -1 means welcome/login screen
   const [isVisible, setIsVisible] = useState(false);
   const [coords, setCoords] = useState({ top: 0, left: 0, width: 0, height: 0 });
+
+  // Profile customization state
+  const userProfile = useVantiStore((state) => state.userProfile);
+  const setUserProfile = useVantiStore((state) => state.setUserProfile);
+
+  const [nickname, setNickname] = useState(userProfile?.name || 'Vanti Nomad');
+  const [selectedAvatar, setSelectedAvatar] = useState(userProfile?.avatarUrl || PRESET_AVATARS[0]);
+  const [snsProvider, setSnsProvider] = useState<string | null>(userProfile?.snsProvider || null);
+  const [tempSnsSyncing, setTempSnsSyncing] = useState<string | null>(null);
+  
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const hasSeenTour = localStorage.getItem('vanti_tour_seen');
@@ -95,13 +114,63 @@ export const OnboardingTour: React.FC = () => {
   };
 
   const handleComplete = () => {
+    // Save customized profile to the store before finishing
+    if (setUserProfile) {
+      setUserProfile({
+        name: nickname,
+        avatarUrl: selectedAvatar,
+        snsProvider: snsProvider || 'None'
+      });
+    }
     setIsVisible(false);
     localStorage.setItem('vanti_tour_seen', 'true');
   };
 
   const handleSkip = () => {
+    if (setUserProfile) {
+      setUserProfile({
+        name: nickname,
+        avatarUrl: selectedAvatar,
+        snsProvider: snsProvider || 'None'
+      });
+    }
     setIsVisible(false);
     localStorage.setItem('vanti_tour_seen', 'true');
+  };
+
+  const triggerSnsLogin = (provider: string) => {
+    setTempSnsSyncing(provider);
+    setTimeout(() => {
+      setSnsProvider(provider);
+      setTempSnsSyncing(null);
+      // Auto-extract mock profile info for immersion
+      if (provider === 'Google') {
+        setNickname('Alex Jordan');
+        setSelectedAvatar('https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80');
+      } else if (provider === 'Apple') {
+        setNickname('Chris Evans');
+        setSelectedAvatar('https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=150&q=80');
+      } else if (provider === 'KakaoTalk') {
+        setNickname('은우 (Kakao)');
+        setSelectedAvatar('https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?auto=format&fit=crop&w=150&q=80');
+      } else if (provider === 'Facebook') {
+        setNickname('Jessie Miller');
+        setSelectedAvatar('https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=150&q=80');
+      }
+    }, 1200);
+  };
+
+  const handleAvatarUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        if (typeof reader.result === 'string') {
+          setSelectedAvatar(reader.result);
+        }
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
   if (!isVisible) return null;
@@ -115,36 +184,197 @@ export const OnboardingTour: React.FC = () => {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="absolute inset-0 bg-[#07090d]/80 backdrop-blur-sm flex items-center justify-center pointer-events-auto"
+            className="absolute inset-0 bg-[#060810]/90 backdrop-blur-md flex items-center justify-center pointer-events-auto p-4 overflow-y-auto"
           >
             <motion.div 
-              initial={{ scale: 0.9, y: 20 }}
+              initial={{ scale: 0.94, y: 15 }}
               animate={{ scale: 1, y: 0 }}
-              className="max-w-md w-full p-8 bg-[#0f1117] border border-white/10 rounded-[2.5rem] shadow-[0_30px_100px_rgba(0,0,0,0.8)] text-center space-y-6"
+              className="max-w-lg w-full p-6 md:p-8 bg-[#090b15]/90 border border-white/10 rounded-[2.5rem] shadow-[0_30px_100px_rgba(0,0,0,0.9)] space-y-6 backdrop-blur-2xl"
             >
-              <div className="w-20 h-20 bg-indigo-500/10 border border-indigo-500/20 rounded-3xl flex items-center justify-center mx-auto shadow-[0_0_50px_rgba(99,102,241,0.2)]">
-                <Sparkles className="w-10 h-10 text-indigo-400 animate-pulse" />
-              </div>
-              
-              <div className="space-y-2">
-                <h2 className="text-3xl font-black text-white uppercase tracking-tighter italic">Welcome to VANTi</h2>
-                <p className="text-slate-400 text-sm leading-relaxed">
-                  Initializing neural interface... Your cinematic travel assistant is ready to help you navigate the world with unprecedented precision.
-                </p>
+              <div className="flex items-center gap-4 border-b border-white/5 pb-4">
+                <div className="w-14 h-14 bg-indigo-500/10 border border-indigo-500/20 rounded-2xl flex items-center justify-center shadow-[0_0_30px_rgba(99,102,241,0.2)] shrink-0">
+                  <Sparkles className="w-7 h-7 text-indigo-400 animate-pulse" />
+                </div>
+                <div>
+                  <h2 className="text-2xl font-black text-white uppercase tracking-tighter italic">Welcome to VANTi</h2>
+                  <p className="text-slate-400 text-xs">Configure your biometric gateway & travel passport</p>
+                </div>
               </div>
 
-              <div className="flex gap-3 pt-4">
+              {/* SNS Login Grid */}
+              <div className="space-y-3">
+                <label className="text-[10px] font-black uppercase text-slate-500 tracking-wider block">1. Connect Identity Node (SNS SSO Link)</label>
+                
+                {snsProvider ? (
+                  <div className="bg-emerald-500/10 border border-emerald-500/20 p-3 rounded-2xl flex items-center justify-between text-xs text-emerald-400 font-mono">
+                    <span className="flex items-center gap-2">
+                      <Check className="w-4 h-4 shrink-0" />
+                      Linked with {snsProvider} Node
+                    </span>
+                    <button 
+                      onClick={() => setSnsProvider(null)}
+                      className="text-[10px] text-slate-500 hover:text-slate-300 font-bold"
+                    >
+                      Disconnect
+                    </button>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-2">
+                    {/* Google */}
+                    <button
+                      onClick={() => triggerSnsLogin('Google')}
+                      disabled={!!tempSnsSyncing}
+                      className="flex items-center justify-center gap-2 py-2.5 px-3 bg-white/5 border border-white/5 hover:bg-white/10 rounded-xl text-left text-xs font-mono font-bold text-white transition-all disabled:opacity-45"
+                    >
+                      {tempSnsSyncing === 'Google' ? (
+                        <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      ) : (
+                        <svg className="w-3.5 h-3.5 text-white shrink-0 fill-current" viewBox="0 0 24 24">
+                          <path d="M12.24 10.285V13.4h6.887C18.2 15.414 15.56 18.1 12.24 18.1c-3.414 0-6.19-2.776-6.19-6.19 0-3.414 2.776-6.19 6.19-6.19 1.465 0 2.812.513 3.844 1.5l2.42-2.42C16.947 3.524 14.717 2.5 12.24 2.5 7.15 2.5 3 6.65 3 11.74s4.15 9.24 9.24 9.24c5.15 0 8.74-3.52 8.74-8.74 0-.62-.054-1.21-.154-1.785H12.24z"/>
+                        </svg>
+                      )}
+                      <span>Google</span>
+                    </button>
+
+                    {/* Apple */}
+                    <button
+                      onClick={() => triggerSnsLogin('Apple')}
+                      disabled={!!tempSnsSyncing}
+                      className="flex items-center justify-center gap-2 py-2.5 px-3 bg-white/5 border border-white/5 hover:bg-white/10 rounded-xl text-xs font-mono font-bold text-white transition-all disabled:opacity-45"
+                    >
+                      {tempSnsSyncing === 'Apple' ? (
+                        <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      ) : (
+                        <svg className="w-3.5 h-3.5 text-white shrink-0 fill-current" viewBox="0 0 24 24">
+                          <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.5 1.29-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.82M15.97 4.17c.66-.81 1.11-1.93.99-3.06-1 .04-2.21.67-2.93 1.49-.62.69-1.16 1.84-1.01 2.96 1.12.09 2.27-.57 2.95-1.39z"/>
+                        </svg>
+                      )}
+                      <span>Apple</span>
+                    </button>
+
+                    {/* KakaoTalk */}
+                    <button
+                      onClick={() => triggerSnsLogin('KakaoTalk')}
+                      disabled={!!tempSnsSyncing}
+                      className="flex items-center justify-center gap-2 py-2.5 px-3 bg-[#fee500] hover:bg-[#ebcf00] rounded-xl text-xs font-mono font-bold text-slate-900 transition-all disabled:opacity-45"
+                    >
+                      {tempSnsSyncing === 'KakaoTalk' ? (
+                        <div className="w-3.5 h-3.5 border-2 border-slate-900/30 border-t-slate-900 rounded-full animate-spin" />
+                      ) : (
+                        <svg className="w-3.5 h-3.5 shrink-0" fill="currentColor" viewBox="0 0 24 24">
+                          <path d="M12 3c-5.52 0-10 3.48-10 7.78 0 2.78 1.88 5.21 4.7 6.62l-1.18 4.34c-.09.34.1.68.43.58l4.98-3.32c.35.05.71.08 1.07.08 5.52 0 10-3.48 10-7.78-.01-4.29-4.49-7.77-10-7.77z"/>
+                        </svg>
+                      )}
+                      <span>KakaoTalk</span>
+                    </button>
+
+                    {/* Facebook */}
+                    <button
+                      onClick={() => triggerSnsLogin('Facebook')}
+                      disabled={!!tempSnsSyncing}
+                      className="flex items-center justify-center gap-2 py-2.5 px-3 bg-[#1877f2] hover:bg-[#1565cf] rounded-xl text-xs font-mono font-bold text-white transition-all disabled:opacity-45"
+                    >
+                      {tempSnsSyncing === 'Facebook' ? (
+                        <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      ) : (
+                        <svg className="w-3.5 h-3.5 shrink-0 fill-current" viewBox="0 0 24 24">
+                          <path d="M22 12c0-5.52-4.48-10-10-10S2 6.48 2 12c0 4.84 3.44 8.87 8 9.8V15H8v-3h2V9.5C10 7.57 11.57 6 13.5 6H16v3h-2c-.55 0-1 .45-1 1v2h3v3h-3v6.95c4.56-.93 8-4.96 8-9.75z"/>
+                        </svg>
+                      )}
+                      <span>Facebook</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Profile Config Details */}
+              <div className="space-y-4 border-t border-white/5 pt-4">
+                <label className="text-[10px] font-black uppercase text-slate-500 tracking-wider block">2. Personalize Profile & Location avatar</label>
+                
+                <div className="flex flex-col md:flex-row items-center gap-4 bg-slate-900/40 p-4 border border-white/5 rounded-2xl">
+                  {/* Avatar Picker & Uploader */}
+                  <div className="relative group cursor-pointer shrink-0" onClick={() => fileInputRef.current?.click()}>
+                    <img 
+                      src={selectedAvatar} 
+                      alt="Selected Profile" 
+                      className="w-16 h-16 rounded-full object-cover border-2 border-indigo-500/50 shadow-md group-hover:opacity-75 transition-opacity"
+                    />
+                    <div className="absolute inset-0 rounded-full bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                      <Camera className="w-4 h-4 text-white" />
+                    </div>
+                    <input 
+                      type="file" 
+                      ref={fileInputRef} 
+                      onChange={handleAvatarUpload} 
+                      accept="image/*" 
+                      className="hidden" 
+                    />
+                  </div>
+
+                  {/* Preset Selector + Nickname */}
+                  <div className="flex-1 space-y-2 w-full">
+                    <div>
+                      <span className="text-[9px] font-mono font-bold text-slate-500 block mb-1">TRAVELER NICKNAME</span>
+                      <input 
+                        type="text" 
+                        value={nickname}
+                        onChange={(e) => setNickname(e.target.value)}
+                        placeholder="Enter Traveler Name..."
+                        className="w-full bg-slate-950/80 border border-slate-800 focus:border-indigo-500 rounded-lg py-1 px-2.5 text-xs font-mono text-white focus:outline-none focus:ring-1 focus:ring-indigo-500/20"
+                      />
+                    </div>
+
+                    <div>
+                      <span className="text-[9px] font-mono font-bold text-slate-500 block mb-1">QUICK CHOOSE AVATAR PRESET</span>
+                      <div className="flex gap-2">
+                        {PRESET_AVATARS.map((avatar, index) => (
+                          <button
+                            key={index}
+                            onClick={() => setSelectedAvatar(avatar)}
+                            className={cn(
+                              "w-7 h-7 rounded-full overflow-hidden border-2 transition-all",
+                              selectedAvatar === avatar ? "border-indigo-400 scale-110" : "border-transparent opacity-60 hover:opacity-100"
+                            )}
+                          >
+                            <img src={avatar} alt={`Preset ${index}`} className="w-full h-full object-cover" />
+                          </button>
+                        ))}
+                        <button
+                          onClick={() => fileInputRef.current?.click()}
+                          className="w-7 h-7 rounded-full bg-white/5 border border-dashed border-white/20 hover:border-white/50 flex items-center justify-center transition-all text-slate-400 hover:text-white"
+                          title="Upload image"
+                        >
+                          <Upload className="w-3 h-3" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Actions */}
+              <div className="flex gap-3 pt-2">
                 <button 
                   onClick={handleSkip}
-                  className="flex-1 py-3 px-6 rounded-2xl bg-white/5 text-slate-500 text-xs font-black uppercase tracking-widest hover:text-slate-300 transition-colors"
+                  className="flex-1 py-3 px-6 rounded-2xl bg-white/5 text-slate-500 text-xs font-black uppercase tracking-widest hover:text-slate-300 transition-colors pointer-events-auto"
                 >
-                  Skip Link
+                  Skip Nodes
                 </button>
                 <button 
-                  onClick={() => setCurrentStep(0)}
-                  className="flex-[2] py-3 px-6 rounded-2xl bg-indigo-500 text-white text-xs font-black uppercase tracking-widest shadow-xl shadow-indigo-500/20 active:scale-95 transition-all"
+                  onClick={() => {
+                    if (setUserProfile) {
+                      setUserProfile({
+                        name: nickname,
+                        avatarUrl: selectedAvatar,
+                        snsProvider: snsProvider || 'Guest'
+                      });
+                    }
+                    setCurrentStep(0);
+                  }}
+                  className="flex-[2] py-3 px-6 rounded-2xl bg-indigo-500 text-white text-xs font-black uppercase tracking-widest shadow-xl shadow-indigo-500/20 active:scale-95 transition-all pointer-events-auto flex items-center justify-center gap-1"
                 >
-                  Begin Core Training
+                  Register Profile & Train
+                  <ChevronRight className="w-4 h-4" />
                 </button>
               </div>
             </motion.div>

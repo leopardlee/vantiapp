@@ -50,10 +50,15 @@ export interface VantiState {
   setIsFinanceTrackerVisible?: (isVisible: boolean) => void;
   isMapOverlayVisible?: boolean;
   setIsMapOverlayVisible?: (isVisible: boolean) => void;
+  isSettingsOpen?: boolean;
+  setIsSettingsOpen?: (isOpen: boolean) => void;
+  isMapDragging: boolean;
+  setIsMapDragging: (isDragging: boolean) => void;
   quickPin: (lat: number, lng: number) => void;
   units: 'metric' | 'imperial';
   mapStyle: 'streets' | 'satellite';
   mapAesthetic: MapAesthetic;
+  travelStyle: 'Minimalist' | 'Vibrant' | 'High-Contrast';
   language: 'en' | 'ko';
   itinerary: any[];
   showWeatherLayer: boolean;
@@ -89,6 +94,8 @@ export interface VantiState {
   recordWeatherPreference: (condition: string) => void;
   currentWeatherData: any | null;
   userLocation: google.maps.LatLngLiteral | null;
+  peerLocations: Record<string, { lat: number, lng: number, displayName: string }>;
+  setPeerLocation: (uid: string, location: { lat: number, lng: number, displayName: string }) => void;
   mapViewport: { center: { lat: number; lng: number }; bounds: { north: number; south: number; east: number; west: number } | null; zoom: number } | null;
   viewportLandmarks: any[];
   setViewportLandmarks: (landmarks: any[]) => void;
@@ -98,15 +105,29 @@ export interface VantiState {
   setIsGaussianActive: (active: boolean) => void;
   is3DActive: boolean;
   setIs3DActive: (active: boolean) => void;
+  purgeInactiveAssets: () => void;
   activeOverlays: string[];
   addOverlay: (id: string) => void;
   removeOverlay: (id: string) => void;
   closeAllOverlays: () => void;
+  isEcoFriendly: boolean;
+  setIsEcoFriendly: (isEcoFriendly: boolean) => void;
+  communityMoments: any[];
+  setCommunityMoments: (moments: any[]) => void;
+  parsedReceipts?: any[];
+  isCrowdPulseActive?: boolean;
+  userProfile?: {
+    name: string;
+    avatarUrl: string;
+    snsProvider?: string;
+  };
 }
 
 export interface VantiActions {
   setActiveMode: (mode: VantiMode) => void;
   setMapTheme: (theme: string) => void;
+  setTravelStyle: (travelStyle: 'Minimalist' | 'Vibrant' | 'High-Contrast') => void;
+  setIsEcoFriendly: (isEcoFriendly: boolean) => void;
   setShowList: (show: boolean) => void;
   setSelectedPlace: (place: any | null) => void;
   setSelectedCategory: (category: string) => void;
@@ -130,6 +151,12 @@ export interface VantiActions {
   setIsVoiceSearchVisible?: (isVisible: boolean) => void;
   setIsFinanceTrackerVisible?: (isVisible: boolean) => void;
   setIsMapOverlayVisible?: (isVisible: boolean) => void;
+  addParsedReceipt?: (receipt: any) => void;
+  removeParsedReceipt?: (id: string) => void;
+  clearParsedReceipts?: () => void;
+  setIsCrowdPulseActive?: (active: boolean) => void;
+  setUserProfile?: (profile: { name: string; avatarUrl: string; snsProvider?: string } | undefined) => void;
+  setIsSettingsOpen?: (isOpen: boolean) => void;
   setUnits: (units: 'metric' | 'imperial') => void;
   setMapStyle: (mapStyle: 'streets' | 'satellite') => void;
   setMapAesthetic: (aesthetic: MapAesthetic) => void;
@@ -192,6 +219,7 @@ export const useVantiStore = create<VantiStore>()(
       clearRecenterTrigger: () => set({ recenterTrigger: null }),
       isInitializing: true,
       setIsInitializing: (isInitializing) => set({ isInitializing }),
+      isGaussianActive: false,
       isAROpen: false,
       setIsAROpen: (isOpen) => set({ isAROpen: isOpen }),
       isAtmosphereOpen: false,
@@ -216,8 +244,28 @@ export const useVantiStore = create<VantiStore>()(
       setIsVoiceSearchVisible: (isVisible) => set({ isVoiceSearchVisible: isVisible }),
       isFinanceTrackerVisible: false,
       setIsFinanceTrackerVisible: (isVisible) => set({ isFinanceTrackerVisible: isVisible }),
+      parsedReceipts: [],
+      addParsedReceipt: (receipt) => set((state) => ({
+        parsedReceipts: [...(state.parsedReceipts || []), { ...receipt, id: `receipt-${Date.now()}` }]
+      })),
+      removeParsedReceipt: (id) => set((state) => ({
+        parsedReceipts: (state.parsedReceipts || []).filter((r: any) => r.id !== id)
+      })),
+      clearParsedReceipts: () => set({ parsedReceipts: [] }),
+      isCrowdPulseActive: false,
+      setIsCrowdPulseActive: (active) => set({ isCrowdPulseActive: active }),
+      userProfile: {
+        name: 'Guest Traveler',
+        avatarUrl: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=150&q=80',
+        snsProvider: 'None'
+      },
+      setUserProfile: (profile) => set({ userProfile: profile }),
       isMapOverlayVisible: false,
       setIsMapOverlayVisible: (isVisible) => set({ isMapOverlayVisible: isVisible }),
+      isSettingsOpen: false,
+      setIsSettingsOpen: (isOpen) => set({ isSettingsOpen: isOpen }),
+      isMapDragging: false,
+      setIsMapDragging: (isDragging) => set({ isMapDragging: isDragging }),
       quickPin: (lat, lng) => set((state) => {
         const newPin = {
           id: `pin-${Date.now()}`,
@@ -235,8 +283,14 @@ export const useVantiStore = create<VantiStore>()(
       setUnits: (units) => set({ units }),
       mapStyle: 'streets',
       setMapStyle: (mapStyle) => set({ mapStyle }),
+      travelStyle: 'Minimalist',
+      setTravelStyle: (travelStyle) => set({ travelStyle }),
       mapAesthetic: typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'night' : 'none',
       setMapAesthetic: (mapAesthetic) => set({ mapAesthetic }),
+      isEcoFriendly: false,
+      setIsEcoFriendly: (isEcoFriendly) => set({ isEcoFriendly }),
+      communityMoments: [],
+      setCommunityMoments: (communityMoments) => set({ communityMoments }),
       language: (typeof navigator !== 'undefined' && navigator.language.startsWith('ko')) ? 'ko' : 'en',
       setLanguage: (language) => {
         set({ language });
@@ -291,10 +345,27 @@ export const useVantiStore = create<VantiStore>()(
       setShowTripSidebar: (showTripSidebar) => set({ showTripSidebar }),
       showAITripSidebar: false,
       setShowAITripSidebar: (showAITripSidebar) => set({ showAITripSidebar }),
-      isGaussianActive: false,
-      setIsGaussianActive: (isGaussianActive) => set({ isGaussianActive }),
+      setIsGaussianActive: (active) => {
+        set({ isGaussianActive: active });
+        if (!active) get().purgeInactiveAssets();
+      },
       is3DActive: false,
-      setIs3DActive: (is3DActive) => set({ is3DActive }),
+      setIs3DActive: (is3DActive) => {
+        set({ is3DActive });
+        if (!is3DActive) get().purgeInactiveAssets();
+      },
+      purgeInactiveAssets: () => {
+        console.log("[Vanti Memory Management] Purging inactive cache and assets...");
+        set({ 
+          viewportLandmarks: [],
+          trendingDestinations: [], // Temporary list
+        });
+        
+        // Potential for more aggressive manual GC hint if needed
+        if (window.gc) {
+          try { window.gc(); } catch(e) {}
+        }
+      },
       activeOverlays: [],
       addOverlay: (id) => set((state) => ({ activeOverlays: state.activeOverlays.includes(id) ? state.activeOverlays : [...state.activeOverlays, id] })),
       removeOverlay: (id) => set((state) => ({ activeOverlays: state.activeOverlays.filter(oid => oid !== id) })),
@@ -370,6 +441,10 @@ export const useVantiStore = create<VantiStore>()(
       setCurrentWeatherData: (currentWeatherData) => set({ currentWeatherData }),
       userLocation: null,
       setUserLocation: (userLocation) => set({ userLocation }),
+      peerLocations: {},
+      setPeerLocation: (uid, location) => set((state) => ({ 
+        peerLocations: { ...state.peerLocations, [uid]: location } 
+      })),
       setQuery: (query) => {
         // Typically triggers a search or filter
         console.log("Setting global search query:", query);
@@ -385,6 +460,7 @@ export const useVantiStore = create<VantiStore>()(
         customMarkers: state.customMarkers,
         units: state.units,
         mapTheme: state.mapTheme,
+        travelStyle: state.travelStyle,
         themeOverride: state.themeOverride,
         mapAesthetic: state.mapAesthetic,
         language: state.language,
@@ -396,7 +472,10 @@ export const useVantiStore = create<VantiStore>()(
         accessibilityScale: state.accessibilityScale,
         isPrefetchingEnabled: state.isPrefetchingEnabled,
         tripStats: state.tripStats,
-        recentSearches: state.recentSearches
+        recentSearches: state.recentSearches,
+        parsedReceipts: state.parsedReceipts,
+        isCrowdPulseActive: state.isCrowdPulseActive,
+        userProfile: state.userProfile
       }),
     }
   )

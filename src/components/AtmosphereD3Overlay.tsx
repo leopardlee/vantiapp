@@ -145,6 +145,7 @@ export function AtmosphereD3Overlay() {
     if (!map || !containerRef.current) return;
 
     let overlay: google.maps.OverlayView | null = new google.maps.OverlayView();
+    let d3Timer: d3.Timer | null = null;
     
     overlay.onAdd = function() {
         const panes = this.getPanes();
@@ -248,7 +249,8 @@ export function AtmosphereD3Overlay() {
 
         // Continuously animate rings scale and dash lines to suggest flow
         let elapsedFactor = 0;
-        const timer = d3.timer((elapsed) => {
+        if (d3Timer) d3Timer.stop();
+        d3Timer = d3.timer((elapsed) => {
           elapsedFactor = (elapsedFactor + 0.4) % 100;
           
           // Animate ring scales
@@ -260,13 +262,6 @@ export function AtmosphereD3Overlay() {
             .style('transform', `scale(${1 + Math.sin(elapsedFactor / 30) * 0.22})`)
             .style('stroke-dashoffset', elapsed / 15);
         });
-
-        this.onRemove = () => {
-          timer.stop();
-          if (containerRef.current?.parentNode) {
-            containerRef.current.parentNode.removeChild(containerRef.current);
-          }
-        };
 
         // 3. Draw solid Center Vibe Anchors
         svg.selectAll('.vibe-core')
@@ -312,14 +307,19 @@ export function AtmosphereD3Overlay() {
     };
 
     overlay.onRemove = function() {
-        // Handled internally in draw/onAdd context for timer safety
+        if (d3Timer) d3Timer.stop();
+        if (containerRef.current?.parentNode) {
+            containerRef.current.parentNode.removeChild(containerRef.current);
+        }
     };
 
     overlay.setMap(map);
 
     return () => {
-        overlay?.setMap(null);
-        overlay = null;
+        if (overlay) {
+            overlay.setMap(null);
+            overlay = null;
+        }
     };
   }, [map, finalHotspots]);
 

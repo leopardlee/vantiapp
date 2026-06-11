@@ -109,43 +109,61 @@ export const PlacesAutocompleteInput = ({ onPlaceSelect }: { onPlaceSelect: (pla
     autocomplete.addEventListener('gmp-placeselect', handlePlaceSelect);
 
     return () => {
+      // Explicitly remove from DOM to prevent persistence
+      if (containerRef.current && containerRef.current.contains(autocomplete)) {
+        containerRef.current.removeChild(autocomplete);
+      }
       autocomplete.removeEventListener('gmp-placeselect', handlePlaceSelect);
     };
   }, [placesLib]);
 
   // We add some global styles for the shadow DOM element
   return (
-    <div className="w-full relative">
+    <div className="w-full relative group">
         <style dangerouslySetInnerHTML={{__html: `
             gmp-place-picker, #gmp-autocomplete-search {
                 width: 100%;
-                --gmp-color-surface: #0f1117;
-                --gmp-color-on-surface: #ffffff;
-                --gmp-color-on-surface-variant: #94a3b8;
+                --gmp-color-surface: #ffffff;
+                --gmp-color-on-surface: #0f172a;
+                --gmp-color-on-surface-variant: #64748b;
                 --gmp-font-family: inherit;
-                border-radius: 16px;
-                border: 1px solid rgba(255,255,255,0.1);
-                box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
-                backdrop-filter: blur(24px);
+                --gmp-color-primary: #f43f5e;
+                border-radius: 28px;
+                border: 2px solid #e2e8f0;
+                box-shadow: 0 15px 35px -5px rgba(0, 0, 0, 0.1), 0 10px 15px -10px rgba(0, 0, 0, 0.1);
                 overflow: hidden;
+                transition: all 0.3s ease;
             }
-            gmp-place-picker::part(input) {
-                background: transparent;
-                border: none;
-                color: #fff;
-                padding: 12px 16px;
-                height: 48px;
+            
+            #gmp-autocomplete-search:focus-within {
+                border-color: #f43f5e;
+                box-shadow: 0 20px 40px -10px rgba(244, 63, 94, 0.2);
+                transform: translateY(-2px);
+            }
+
+            gmp-place-autocomplete::part(input) {
+                background: white;
+                color: #1e293b;
+                padding: 0 20px;
+                height: 60px;
+                font-size: 16px;
+                font-weight: 600;
+            }
+
+            /* Shift the dropdown to the bottom */
+            div[slot="results"] {
+              margin-top: 10px !important;
             }
         `}} />
-        <div ref={containerRef} className="w-full h-12" />
+        <div ref={containerRef} className="w-full h-[60px]" />
         <button 
             onClick={startVoiceSearch}
             className={cn(
-                "absolute right-3 top-1/2 -translate-y-1/2 w-8 h-8 rounded-lg flex items-center justify-center transition-all z-10",
-                isListening ? "bg-rose-500 text-white animate-pulse" : "bg-white/5 text-slate-400 hover:text-white hover:bg-white/10"
+                "absolute right-4 top-1/2 -translate-y-1/2 w-11 h-11 rounded-2xl flex items-center justify-center transition-all z-10",
+                isListening ? "bg-rose-500 text-white shadow-[0_0_15px_rgba(244,63,94,0.5)]" : "bg-slate-100 text-slate-500 hover:bg-slate-200 hover:text-slate-900"
             )}
         >
-            {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+            {isListening ? <MicOff className="w-5 h-5 animate-pulse" /> : <Mic className="w-5 h-5" />}
         </button>
     </div>
   );

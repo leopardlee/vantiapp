@@ -178,6 +178,10 @@ service cloud.firestore {
       allow write: if isSignedIn() && request.auth.uid == userId && isValidUserLocation(incoming());
     }
 
+    match /communityMoments/{momentId} {
+      allow read: if true;
+    }
+
     match /travelSnapshots/{snapshotId} {
       allow read: if isSignedIn();
       allow create: if isSignedIn() && isValidId(snapshotId) && isValidTravelSnapshot(incoming());

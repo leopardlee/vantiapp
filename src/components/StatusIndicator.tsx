@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { LucideIcon } from 'lucide-react';
+import { LucideIcon, Globe } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 interface StatusIndicatorProps {
@@ -23,7 +23,7 @@ export function StatusIndicator({
   tooltipTitle,
   tooltipDescription,
   metrics,
-  icon: Icon,
+  icon: Icon = Globe,
   className
 }: StatusIndicatorProps) {
   const [isOpen, setIsOpen] = useState(false);
@@ -70,34 +70,74 @@ export function StatusIndicator({
 
   return (
     <div className={cn("relative flex flex-col items-center", className)}>
+      <motion.button
+        whileHover={{ scale: 1.12 }}
+        whileTap={{ scale: 0.92 }}
+        onClick={() => setIsOpen(!isOpen)}
+        className={cn(
+          "relative flex items-center gap-2 px-2.5 py-1.5 rounded-xl border bg-slate-900/60 cursor-pointer transition-all duration-300 pointer-events-auto",
+          isOpen ? cn("border-opacity-100 bg-[#0c0e12]", colors.border) : "border-white/10 hover:border-slate-600"
+        )}
+      >
+        {/* Pulsing Aura */}
+        {pulse && (
+          <div className={cn(
+            "absolute inset-0 rounded-xl blur-sm animate-pulse scale-105 pointer-events-none",
+            colors.aura
+          )} />
+        )}
+        
+        {/* The Icon */}
+        <Icon className={cn("w-4 h-4 shrink-0 relative z-10 transition-transform duration-300", isOpen && "scale-110", colors.text)} />
+        
+        {/* Small indicator status dot inside the button */}
+        <div className={cn(
+          "w-1.5 h-1.5 rounded-full relative z-10 border border-white/10 shrink-0",
+          colors.bg,
+          colors.shadow
+        )} />
+
+        {/* Short scannable helper name */}
+        <span className="text-[9px] font-mono font-black text-slate-300 uppercase tracking-wider hidden md:inline">
+          {label.split(' ')[0]}
+        </span>
+      </motion.button>
+
+      {/* Floating Info Dropdown appearing directly BELOW the button */}
       <AnimatePresence>
         {isOpen && (
           <motion.div
-            initial={{ opacity: 0, y: 10, scale: 0.9, filter: 'blur(10px)' }}
-            animate={{ opacity: 1, y: 0, scale: 1, filter: 'blur(0px)' }}
-            exit={{ opacity: 0, y: 10, scale: 0.9, filter: 'blur(10px)' }}
+            initial={{ opacity: 0, y: -10, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -5, scale: 0.95 }}
             transition={{ type: "spring", stiffness: 400, damping: 25 }}
             className={cn(
-              "absolute bottom-full mb-3 p-4 bg-[#0c0e12]/95 backdrop-blur-xl border rounded-2xl shadow-2xl min-w-[240px] z-[300]",
+              "absolute top-full mt-3 p-4 bg-[#090b15]/95 backdrop-blur-3xl border rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.8)] min-w-[250px] z-[300]",
               colors.border
             )}
           >
-            <div className="flex items-center gap-2 mb-2">
-              {Icon && <Icon className={cn("w-3.5 h-3.5", colors.text)} />}
-              <h4 className={cn("text-[10px] font-black uppercase tracking-widest", colors.text)}>
-                {tooltipTitle}
-              </h4>
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-white/5 pb-2 mb-2">
+              <div className="flex items-center gap-1.5">
+                <Icon className={cn("w-3.5 h-3.5", colors.text)} />
+                <h4 className={cn("text-[10px] font-black uppercase tracking-widest", colors.text)}>
+                  {tooltipTitle}
+                </h4>
+              </div>
+              <span className={cn("text-[8px] font-mono font-bold px-1.5 py-0.5 rounded-md bg-white/5", colors.text)}>
+                {label}
+              </span>
             </div>
             
-            <p className="text-white/80 text-[11px] font-medium leading-relaxed mb-3">
+            <p className="text-white/80 text-[10.5px] font-medium leading-relaxed mb-3">
               {tooltipDescription}
             </p>
 
             {metrics && metrics.length > 0 && (
-              <div className="space-y-1.5 pt-2 border-t border-white/5">
+              <div className="space-y-1.5 pt-2 border-t border-white/10">
                 {metrics.map((m, i) => (
                   <div key={i} className="flex justify-between items-center text-[9px] font-mono">
-                    <span className="text-white/40 uppercase tracking-tighter">{m.label}</span>
+                    <span className="text-slate-400 uppercase tracking-tighter">{m.label}</span>
                     <span className={cn("font-bold tracking-tight", colors.text)}>{m.value}</span>
                   </div>
                 ))}
@@ -106,51 +146,14 @@ export function StatusIndicator({
 
             <button 
               onClick={() => setIsOpen(false)}
-              className="mt-3 w-full text-center text-[8px] font-black text-white/20 hover:text-white/40 uppercase tracking-widest transition-colors py-1"
+              className="mt-3.5 w-full text-center text-[8.5px] font-black text-slate-500 hover:text-slate-300 uppercase tracking-widest transition-colors py-1 bg-white/5 rounded-lg border border-white/5"
             >
-              Close Metric View
+              Minimize View
             </button>
           </motion.div>
         )}
       </AnimatePresence>
-
-      <motion.button
-        whileHover={{ scale: 1.25 }}
-        whileTap={{ scale: 0.85 }}
-        onClick={() => setIsOpen(!isOpen)}
-        className="relative flex items-center justify-center group outline-none"
-      >
-        {/* Pulsing Aura */}
-        {pulse && (
-          <div className={cn(
-            "absolute inset-0 rounded-full blur-md animate-pulse scale-150 transition-colors",
-            colors.aura
-          )} />
-        )}
-        
-        {/* The Dot */}
-        <div className={cn(
-          "w-2.5 h-2.5 rounded-full border border-white/20 transition-all duration-300",
-          colors.bg,
-          colors.shadow
-        )} />
-        
-        {/* Label on Hover */}
-        <div className="absolute left-full ml-3 pointer-events-none">
-          <div className="overflow-hidden">
-            <motion.span 
-              initial={{ x: -10, opacity: 0 }}
-              whileHover={{ x: 0, opacity: 1 }}
-              className={cn(
-                "block whitespace-nowrap text-[8px] font-black uppercase tracking-[0.25em] opacity-0 group-hover:opacity-100 transition-all duration-300",
-                colors.text
-              )}
-            >
-              {label}
-            </motion.span>
-          </div>
-        </div>
-      </motion.button>
     </div>
   );
 }
+

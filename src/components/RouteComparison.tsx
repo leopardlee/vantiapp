@@ -97,7 +97,7 @@ export function RouteComparison({ origin, destination, onSelectRoute }: RouteCom
       {loading ? (
         <div className="flex justify-between gap-2">
           {[1,2,3].map(i => (
-            <div key={i} className="flex-1 bg-slate-800/50 animate-pulse h-16 rounded-lg border border-slate-700/50" />
+            <div key={`route-comp-skeleton-${i}`} className="flex-1 bg-slate-800/50 animate-pulse h-16 rounded-lg border border-slate-700/50" />
           ))}
         </div>
       ) : (

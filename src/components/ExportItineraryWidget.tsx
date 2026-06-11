@@ -106,7 +106,7 @@ export function ExportItineraryWidget() {
                       {exportData.discoveryNodes.length > 0 ? (
                           <div className="space-y-3">
                               {exportData.discoveryNodes.map((node: any, i: number) => (
-                                  <div key={i} className="bg-white p-3 rounded-2xl shadow-sm border border-slate-100 flex flex-col gap-1">
+                                  <div key={`node-${node.name}-${i}`} className="bg-white p-3 rounded-2xl shadow-sm border border-slate-100 flex flex-col gap-1">
                                       <span className="font-bold text-rose-500 text-sm">{node.name}</span>
                                       <span className="text-xs text-slate-500">{node.address}</span>
                                   </div>
@@ -125,7 +125,7 @@ export function ExportItineraryWidget() {
                       {exportData.memoryTrail.length > 0 ? (
                           <div className="relative pl-4 space-y-4 border-l-2 border-rose-200 ml-2">
                               {exportData.memoryTrail.slice(-10).map((pin: any, i: number) => (
-                                  <div key={i} className="relative">
+                                  <div key={`trail-${pin.time}-${i}`} className="relative">
                                       <div className="absolute -left-[21px] top-1 w-3 h-3 bg-white border-2 border-rose-400 rounded-full" />
                                       <div className="text-[10px] font-bold text-rose-400 mb-0.5">{pin.time}</div>
                                       <div className="text-xs text-slate-600 bg-white inline-block px-2 py-1 rounded shadow-sm border border-slate-100">

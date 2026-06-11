@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Sparkles, Loader2, X, MapPin } from 'lucide-react';
+import { Sparkles, Loader2, X, MapPin, Leaf } from 'lucide-react';
 import { useVantiStore } from '../store/vantiStore';
+import { cn } from '../lib/utils';
 import { collection, query, getDocs, orderBy, limit } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
 import Markdown from 'react-markdown';
@@ -88,6 +89,12 @@ export function JourneyRecapWidget() {
                     <MapPin className="w-3 h-3 text-cyan-400" />
                     <span>{Object.keys(bookmarkedPlaces).length} Nodes Captured</span>
                  </div>
+                 <button 
+                   onClick={() => useVantiStore.getState().setIsEcoFriendly(!useVantiStore.getState().isEcoFriendly)}
+                   className={cn("w-full py-3 rounded-xl font-bold transition-colors mb-2 flex items-center justify-center gap-2 border", useVantiStore.getState().isEcoFriendly ? "bg-emerald-600/20 border-emerald-500 text-emerald-400" : "bg-slate-800 border-slate-700 text-slate-400")}
+                 >
+                   <Leaf className="w-4 h-4" /> Eco-Friendly Pathfinding: {useVantiStore.getState().isEcoFriendly ? 'ON' : 'OFF'}
+                 </button>
                  <button 
                    onClick={() => setIsOpen(false)}
                    className="w-full bg-indigo-600 hover:bg-indigo-500 py-3 rounded-xl text-white font-bold transition-colors"

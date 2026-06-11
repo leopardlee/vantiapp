@@ -494,7 +494,7 @@ export default function RouteDisplay({
                 const stripHtml = (html: string) => html.replace(/<[^>]*>/g, '');
 
                 return (
-                  <div key={idx} className="relative text-xs">
+                  <div key={`transit-step-${idx}`} className="relative text-xs">
                     {/* Node connector indicator */}
                     <div 
                       className="absolute -left-[23px] top-1 w-2.5 h-2.5 rounded-full bg-slate-900 border-2"

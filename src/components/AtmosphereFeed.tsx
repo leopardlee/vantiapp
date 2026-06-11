@@ -84,7 +84,7 @@ export function AtmosphereFeed() {
             <div className="h-24 overflow-hidden relative">
                 <div className="flex flex-col gap-2 absolute w-full animate-marquee-up hover:pause">
                     {moods.concat(moods).map((mood, idx) => (
-                        <div key={idx} className="flex gap-2 items-start bg-white/5 rounded-xl p-2 border border-white/5">
+                        <div key={`mood-feed-${idx}`} className="flex gap-2 items-start bg-white/5 rounded-xl p-2 border border-white/5">
                             <div className="text-lg leading-none">{mood.emoji}</div>
                             <div>
                                 <div className="text-xs text-slate-200 line-clamp-2">{mood.text}</div>

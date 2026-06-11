@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Radar, Activity, Info, Zap, Battery, Navigation } from 'lucide-react';
+import { Radar, Activity, Info, Zap, Battery, Navigation, X } from 'lucide-react';
 import { useVantiStore } from '../store/vantiStore';
 import { cn } from '../lib/utils';
 
@@ -38,6 +38,7 @@ export function FloatingRadarWidget() {
   const isBatterySaverEnabled = useVantiStore(state => state.isBatterySaverEnabled);
 
   const isActive = useVantiStore(state => state.isRadarActive);
+  const setIsRadarActive = useVantiStore(state => state.setIsRadarActive);
   const [hotspots, setHotspots] = useState<Hotspot[]>([]);
   const isExpanded = true;
   const [showLegend, setShowLegend] = useState(false);
@@ -166,9 +167,20 @@ export function FloatingRadarWidget() {
             <div className="absolute inset-0 bg-gradient-to-br from-emerald-500/5 to-cyan-500/5 opacity-50 pointer-events-none" />
             
             {/* Header */}
-            <div className="flex items-center gap-2 mb-3 relative z-10 font-mono">
-              <Radar className="w-4 h-4 text-emerald-400 animate-pulse" />
-              <span className="text-white text-[10px] font-black tracking-widest uppercase">TRENDING RADAR</span>
+            <div className="flex items-center justify-between mb-3 relative z-10 font-mono">
+              <div className="flex items-center gap-2">
+                <Radar className="w-4 h-4 text-emerald-400 animate-pulse" />
+                <span className="text-white text-[10px] font-black tracking-widest uppercase">TRENDING RADAR</span>
+              </div>
+              {setIsRadarActive && (
+                <button 
+                  onClick={() => setIsRadarActive(false)}
+                  className="p-1 hover:bg-white/5 rounded-md transition-colors text-slate-400 hover:text-white"
+                  title="Close Radar"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
             </div>
 
             {/* List of hotspots */}

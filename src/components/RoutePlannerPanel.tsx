@@ -142,7 +142,7 @@ export default function RoutePlannerPanel({ onClose }: { onClose: () => void }) 
                 "{scenicData.routeAnalysis}"
               </p>
               {scenicData.waypoints?.map((wp: any, i: number) => (
-                <div key={i} className="flex items-center gap-2">
+                <div key={`scenic-wp-${i}`} className="flex items-center gap-2">
                   <div className="w-1 h-1 rounded-full bg-amber-500" />
                   <span className="text-[9px] text-amber-200/90 font-medium">{wp.name}</span>
                 </div>

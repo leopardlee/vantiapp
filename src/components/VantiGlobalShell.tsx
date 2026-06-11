@@ -19,11 +19,14 @@ interface VantiGlobalShellProps {
 }
 
 export function VantiGlobalShell({ children, bottomNavigation }: VantiGlobalShellProps) {
+  const travelStyle = useVantiStore((state) => state.travelStyle);
   const isInitializing = useVantiStore((state) => state.isInitializing);
   const { isDarkMode, timePhase } = useThemeManager();
   const [activeStep, setActiveStep] = useState(0);
   const [cloudStatus, setCloudStatus] = useState<boolean | 'loading'>('loading');
   
+  const moodClass = travelStyle === 'High-Contrast' ? 'mood-noir' : `mood-${travelStyle.toLowerCase().replace(' ', '-')}`;
+
   const itineraryCount = useVantiStore((state) => state.itinerary.length);
   const showTripSidebar = useVantiStore((state) => state.showTripSidebar);
   const setShowTripSidebar = useVantiStore((state) => state.setShowTripSidebar);
@@ -96,18 +99,16 @@ export function VantiGlobalShell({ children, bottomNavigation }: VantiGlobalShel
 
   const CurrentStepIcon = steps[activeStep].icon;
 
-  const getPhaseBg = () => {
-    switch (timePhase) {
-      case 'dawn': return 'bg-[#fdf4ff]';
-      case 'day': return 'bg-[#e2e8f0]';
-      case 'dusk': return 'bg-[#1a0b36]';
-      case 'night':
-      default: return 'bg-[#0a0c10]';
-    }
-  };
-
   return (
-    <div className={cn("relative h-screen w-full flex flex-col items-stretch pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] transition-colors duration-1000 overflow-hidden", getPhaseBg())}>
+    <div 
+      className={cn("relative h-screen w-full flex flex-col items-stretch transition-colors duration-1000 overflow-hidden", moodClass)}
+      style={{
+        paddingTop: 'env(safe-area-inset-top, 0px)',
+        paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+        paddingLeft: 'env(safe-area-inset-left, 0px)',
+        paddingRight: 'env(safe-area-inset-right, 0px)'
+      }}
+    >
       {/* Cinematic Vignette & Grain */}
       <div className="absolute inset-0 pointer-events-none z-[120] shadow-[inset_0_0_150px_rgba(0,0,0,0.35)] mix-blend-multiply" />
       <div className="absolute inset-0 pointer-events-none z-[120] opacity-[0.03]" style={{ backgroundImage: 'url("data:image/svg+xml,%3Csvg viewBox=%220 0 200 200%22 xmlns=%22http://www.w3.org/2000/svg%22%3E%3Cfilter id=%22noiseFilter%22%3E%3CfeTurbulence type=%22fractalNoise%22 baseFrequency=%220.65%22 numOctaves=%223%22 stitchTiles=%22stitch%22/%3E%3C/filter%3E%3Crect width=%22100%25%22 height=%22100%25%22 filter=%22url(%23noiseFilter)%22/%3E%3C/svg%3E")' }} />
@@ -238,58 +239,8 @@ export function VantiGlobalShell({ children, bottomNavigation }: VantiGlobalShel
                   </span>
                 </div>
 
-                {/* HUD Toggle for My Trip Sidebar */}
-                {!isInitializing && (
-                  <div className="flex items-center gap-2">
-                    <motion.button
-                      initial={{ opacity: 0, x: 20 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      transition={{ type: 'spring', damping: 15, stiffness: 200, delay: 0.1 }}
-                      whileHover={{ scale: 1.05 }}
-                      whileTap={{ scale: 0.95 }}
-                      onClick={() => setIsInsightsDrawerOpen(true)}
-                      className="px-3 py-2 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 hover:bg-indigo-500 hover:text-white transition-all pointer-events-auto"
-                    >
-                      <BarChart3 className="w-3.5 h-3.5" />
-                    </motion.button>
-                    
-                    <motion.button
-                      initial={{ opacity: 0, x: 20 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      transition={{ type: 'spring', damping: 15, stiffness: 200 }}
-                      whileHover={{ scale: 1.05 }}
-                      whileTap={{ scale: 0.95 }}
-                      onClick={() => setShowTripSidebar(!showTripSidebar)}
-                      className={cn(
-                        "px-4 py-2 rounded-2xl border transition-all flex items-center gap-2 pointer-events-auto shadow-lg",
-                        showTripSidebar 
-                          ? "bg-rose-500 border-rose-400 text-white shadow-rose-900/40" 
-                          : "bg-[#121620]/80 border-white/10 text-slate-400 hover:text-white hover:border-white/20"
-                      )}
-                    >
-                      <Route className="w-3.5 h-3.5" />
-                      <span className="text-[10px] font-black uppercase tracking-widest">My Trip ({itineraryCount})</span>
-                    </motion.button>
-
-                    <motion.button
-                      initial={{ opacity: 0, x: 20 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      transition={{ type: 'spring', damping: 15, stiffness: 200, delay: 0.05 }}
-                      whileHover={{ scale: 1.05 }}
-                      whileTap={{ scale: 0.95 }}
-                      onClick={() => setShowAITripSidebar(!showAITripSidebar)}
-                      className={cn(
-                        "px-4 py-2 rounded-2xl border transition-all flex items-center gap-2 pointer-events-auto shadow-lg",
-                        showAITripSidebar 
-                          ? "bg-purple-600 border-purple-400 text-white shadow-purple-900/40" 
-                          : "bg-[#121620]/80 border-white/10 text-slate-400 hover:text-white hover:border-white/20"
-                      )}
-                    >
-                      <Sparkles className="w-3.5 h-3.5" />
-                      <span className="text-[10px] font-black uppercase tracking-widest">AI Planner</span>
-                    </motion.button>
-                  </div>
-                )}
+                {/* HUD Toggle for My Trip Sidebar (Moved to ControlCluster) */}
+                <div />
               </div>
             </div>
 
@@ -359,19 +310,14 @@ export function VantiGlobalShell({ children, bottomNavigation }: VantiGlobalShel
               </div>
             </div>
 
-            {/* Right-hand side vertical control stack Skeleton */}
-            <div className="absolute top-[45%] -translate-y-1/2 right-4 md:right-6 flex flex-col gap-3 items-end pointer-events-none">
-              <div className="bg-[#121620]/75 border border-white/5 rounded-full p-2 flex flex-col gap-2 items-center relative overflow-hidden shadow-2xl">
-                <div className="absolute inset-0 vanti-skeleton-shimmer" />
-                <div className="w-8 h-8 rounded-full bg-slate-800" />
-                <div className="w-8 h-8 rounded-full bg-slate-800" />
-                <div className="w-8 h-8 rounded-full bg-slate-800" />
-                <div className="w-8 h-8 rounded-full bg-slate-800" />
-              </div>
-            </div>
+            {/* Right-hand side vertical control stack Skeleton (Removed) */}
+            <div className="absolute top-[45%] -translate-y-1/2 right-4 md:right-6 flex flex-col gap-3 items-end pointer-events-none" />
 
             {/* Bottom Nav Skeleton */}
-            <div className="absolute bottom-[calc(1.5rem+env(safe-area-inset-bottom,0px))] md:bottom-12 left-1/2 -translate-x-1/2 w-full max-w-[340px] px-4 flex justify-center pb-2 z-10">
+            <div 
+              className="absolute left-1/2 -translate-x-1/2 w-full max-w-[340px] px-4 flex justify-center pb-2 z-10 md:bottom-12"
+              style={{ bottom: 'calc(1.5rem + env(safe-area-inset-bottom, 0px))' }}
+            >
               <div className="bg-[#121620]/75 border border-white/5 rounded-full h-14 w-full flex items-center justify-between px-6 relative overflow-hidden shadow-2xl">
                 <div className="absolute inset-0 vanti-skeleton-shimmer" />
                 <div className="w-7 h-7 rounded-full bg-slate-800" />
@@ -393,7 +339,13 @@ export function VantiGlobalShell({ children, bottomNavigation }: VantiGlobalShel
         <main className="flex-1 overflow-hidden relative" style={{ pointerEvents: 'none' }} />
 
         {/* Bottom Navigation Area - Anchored to bottom with safe-area padding */}
-        <footer className="shrink-0 w-full flex flex-col justify-end items-center gap-4 px-4 pb-[calc(1.5rem+env(safe-area-inset-bottom,0px))] md:pb-12" style={{ pointerEvents: 'none' }}>
+        <footer 
+          className="shrink-0 w-full flex flex-col justify-end items-center gap-4 px-4 md:pb-12" 
+          style={{ 
+            pointerEvents: 'none',
+            paddingBottom: 'calc(1.5rem + env(safe-area-inset-bottom, 0px))'
+          }}
+        >
           <motion.div
             initial={{ y: 100, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}

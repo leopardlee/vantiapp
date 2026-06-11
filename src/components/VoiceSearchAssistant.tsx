@@ -11,10 +11,14 @@ export function VoiceSearchAssistant() {
   const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
+  const [aiSpeechResponse, setAiSpeechResponse] = useState('');
+
   const recognitionRef = useRef<any>(null);
   const setQuery = useVantiStore(state => state.setQuery);
   const addRecentSearch = useVantiStore(state => state.addRecentSearch);
   const recentSearches = useVantiStore(state => state.recentSearches);
+  const setSelectedCategory = useVantiStore(state => state.setSelectedCategory);
+  const setTravelMood = useVantiStore(state => state.setTravelMood);
   const setSimulatedRoutingCondition = useVantiStore(state => state.setSimulatedRoutingCondition);
   const [showRecent, setShowRecent] = useState(false);
 
@@ -35,7 +39,10 @@ export function VoiceSearchAssistant() {
         setTranscript(currentTranscript);
       };
 
-      recognition.onstart = () => setIsListening(true);
+      recognition.onstart = () => {
+        setIsListening(true);
+        setAiSpeechResponse('');
+      };
       
       recognition.onerror = (event: any) => {
         console.error('Speech recognition error', event.error);
@@ -45,7 +52,6 @@ export function VoiceSearchAssistant() {
 
       recognition.onend = () => {
         setIsListening(false);
-        // Process when ended
       };
 
       recognitionRef.current = recognition;
@@ -66,6 +72,7 @@ export function VoiceSearchAssistant() {
       setIsVoiceSearchVisible(false);
     } else {
       setTranscript('');
+      setAiSpeechResponse('');
       recognitionRef.current?.start();
     }
   };
@@ -73,33 +80,49 @@ export function VoiceSearchAssistant() {
   const processResponse = async () => {
      if (!transcript) return;
      setIsProcessing(true);
+     setAiSpeechResponse('');
      
      try {
-       const res = await fetch('/api/chat', {
+       const res = await fetch('/api/voice-understand', {
          method: 'POST',
          headers: { 'Content-Type': 'application/json' },
-         body: JSON.stringify({ message: `I am speaking a voice command: "${transcript}". Please respond normally, and specifically if I say "find me a quiet cafe nearby", call the routing or place functions.` })
+         body: JSON.stringify({ voiceString: transcript })
        });
-       const data = await res.json();
-       
-       if (data.functionCalls && data.functionCalls.length > 0) {
-           for (const fn of data.functionCalls) {
-               if (fn.name === 'triggerSimulatedRouting') {
-                   setSimulatedRoutingCondition(fn.args.condition || 'Clear', true);
-                   setQuery(`Route to quiet cafe`);
-               } else if (fn.name === 'searchSurroundingArea') {
-                   setQuery(fn.args.keyword);
-               }
+       if (res.ok) {
+         const data = await res.json();
+         
+         if (data.query) {
+           setQuery(data.query);
+           addRecentSearch(data.query);
+         }
+         if (data.category) {
+           setSelectedCategory(data.category);
+         }
+         if (data.style) {
+           setTravelMood(data.style);
+         }
+         if (data.speakResponse) {
+           setAiSpeechResponse(data.speakResponse);
+           
+           if (typeof window !== 'undefined' && window.speechSynthesis) {
+             try {
+               window.speechSynthesis.cancel();
+               const utterance = new SpeechSynthesisUtterance(data.speakResponse);
+               utterance.rate = 1.05;
+               window.speechSynthesis.speak(utterance);
+             } catch (ttsErr) {
+               console.warn("Speech Synthesis output suppressed:", ttsErr);
+             }
            }
+         }
        } else {
-           setQuery(transcript);
+         setQuery(transcript);
        }
      } catch (err) {
          console.warn(err);
          setQuery(transcript);
      } finally {
          setIsProcessing(false);
-         setTranscript('');
      }
   };
 
@@ -108,7 +131,6 @@ export function VoiceSearchAssistant() {
        processResponse();
     }
   }, [isListening, transcript]);
-
 
   return (
     <AnimatePresence>
@@ -149,11 +171,28 @@ export function VoiceSearchAssistant() {
               )}
            </motion.button>
            
-            <CloseButton 
-               onClick={() => setIsVoiceSearchVisible(false)} 
-               isAbsolute={false}
-               className="absolute -right-2 -top-2"
-            />
+           <CloseButton 
+              onClick={() => setIsVoiceSearchVisible(false)} 
+              isAbsolute={false}
+              className="absolute -right-2 -top-2"
+           />
+
+           {/* AI Speech Transcript Feedback Bubble */}
+           <AnimatePresence>
+             {aiSpeechResponse && (
+               <motion.div
+                 initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                 animate={{ opacity: 1, y: 0, scale: 1 }}
+                 exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                 className="mt-3 w-[285px] bg-[#0c0f16]/95 backdrop-blur-xl border border-indigo-500/30 rounded-2xl p-3 shadow-[0_20px_50px_rgba(0,0,0,0.5)] z-40 text-center flex flex-col gap-1 items-center mx-auto"
+               >
+                 <span className="text-[8px] tracking-widest font-mono text-indigo-400 uppercase font-black animate-pulse">AI Voice Response</span>
+                 <p className="text-xs text-white leading-relaxed font-sans font-medium">
+                   {aiSpeechResponse}
+                 </p>
+               </motion.div>
+             )}
+           </AnimatePresence>
 
            {/* Recent Searches */}
            <AnimatePresence>

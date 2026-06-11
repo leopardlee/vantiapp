@@ -64,6 +64,15 @@ export function useThemeManager(): { isDarkMode: boolean; timePhase: TimePhase }
     
     // Assign a data attribute to root for UI components to read if they need Tailwind styling based on time
     document.documentElement.setAttribute('data-time-phase', timePhase);
+    
+    // Map Lighting System Integration
+    const mapTheme = (window as any).VantiMapTheme;
+    if (mapTheme) {
+        if (timePhase === 'dawn') mapTheme.setStyles('Golden Hour');
+        else if (timePhase === 'dusk') mapTheme.setStyles('Blue Hour');
+        else if (timePhase === 'night') mapTheme.setStyles('Deep Midnight');
+        else mapTheme.setStyles('Default');
+    }
   }, [timePhase]);
 
   return { isDarkMode, timePhase };

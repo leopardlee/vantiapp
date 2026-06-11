@@ -6,14 +6,39 @@
   --font-display: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
 }
 
+:root {
+  --vanti-bg: #0f1115;
+  --vanti-text: #f1f5f9;
+  --vanti-accent: #6366f1;
+}
+
+.mood-minimalist {
+  --vanti-bg: #ffffff;
+  --vanti-text: #1e293b;
+  --vanti-accent: #475569;
+}
+
+.mood-vibrant {
+  --vanti-bg: #fff7ed;
+  --vanti-text: #7c2d12;
+  --vanti-accent: #ea580c;
+}
+
+.mood-noir {
+  --vanti-bg: #000000;
+  --vanti-text: #ffffff;
+  --vanti-accent: #ffffff;
+}
+
 body {
   margin: 0;
   padding: 0;
   overflow: hidden;
-  background-color: #0f1115;
-  color: #f1f5f9;
+  background-color: var(--vanti-bg);
+  color: var(--vanti-text);
   height: 100vh;
   height: calc(var(--vh, 1vh) * 100);
+  transition: background-color 0.5s ease, color 0.5s ease;
 }
 
 #root {

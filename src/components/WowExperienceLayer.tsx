@@ -122,50 +122,7 @@ export function WowExperienceLayer() {
         )}
       </AnimatePresence>
 
-      {/* 5. System Status HUD - Minimized to Dots per User Request */}
-      <div className="absolute top-6 left-1/2 -translate-x-1/2 flex items-center gap-6 pointer-events-auto z-[200]">
-        <StatusIndicator 
-          id="neural-link"
-          label="Link Stable"
-          dotColor="emerald"
-          icon={Globe}
-          tooltipTitle="Neural Link Status"
-          tooltipDescription="System synchronization is robust. Your neural link to the Vanti data grid is established and optimized for real-time spatial processing."
-          metrics={[
-            { label: 'Latency', value: '0.04ms' },
-            { label: 'Sync Rate', value: '1.2GB/s' },
-            { label: 'Security', value: 'Quantum-Safe' }
-          ]}
-        />
-
-        <StatusIndicator 
-          id="gps-lock"
-          label="GPS Locked"
-          dotColor="cyan"
-          icon={Navigation}
-          tooltipTitle="Satellite Precision"
-          tooltipDescription="Orbital triangulation active. Current position accuracy is within 0.1 meters via high-density constellation link."
-          metrics={[
-            { label: 'Satellites', value: '32 Active' },
-            { label: 'Precision', value: '±0.1m' },
-            { label: 'Datum', value: 'WGS84-V' }
-          ]}
-        />
-
-        <StatusIndicator 
-          id="network-grid"
-          label="Grid Active"
-          dotColor="indigo"
-          icon={Sparkles}
-          tooltipTitle="Vanti Data Grid"
-          tooltipDescription="Connected to the global Vanti Mesh. Map tiles and real-time transit telemetry are synchronized via distributed edge nodes."
-          metrics={[
-            { label: 'Node', value: 'VANTI-ASIA-01' },
-            { label: 'Bandwidth', value: 'Unlimited' },
-            { label: 'Packets', value: 'Zero Drop' }
-          ]}
-        />
-      </div>
+      {/* 5. System Status HUD moved to VantiMap.tsx for proper unified desktop/mobile container layout with 4 dots */}
       
       {/* 6. Mouse Aura Follower */}
       {mousePos.x > -1 && (

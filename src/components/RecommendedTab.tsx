@@ -84,7 +84,7 @@ export default function RecommendedTab({
           <div className="space-y-2">
             {recommendations.map((rec, idx) => (
               <div 
-                key={idx} 
+                key={`rec-${idx}`} 
                 className="bg-slate-950/60 border border-white/5 rounded-xl p-3 hover:bg-white/5 transition-colors cursor-pointer group"
                 onClick={() => {
                   if (rec.lat !== 0 && rec.lng !== 0) {

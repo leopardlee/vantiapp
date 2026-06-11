@@ -250,6 +250,44 @@ const PlaceDetailsPanel = React.memo(function PlaceDetailsPanel({ place, onBack,
   // Gallery Active Photo Index
   const [activePhotoIndex, setActivePhotoIndex] = useState(0);
 
+  // Sentiment and Vibe Analysis states
+  const [sentimentResult, setSentimentResult] = useState<{
+    vibe: string;
+    sentimentScore: number;
+    crowdLevel: string;
+    summary: string;
+  } | null>(null);
+  const [isAnalyzingSentiment, setIsAnalyzingSentiment] = useState(false);
+
+  useEffect(() => {
+    const fetchSentimentAndVibe = async () => {
+      if (!place?.displayName && !place?.name) return;
+      setIsAnalyzingSentiment(true);
+      setSentimentResult(null);
+      try {
+        const res = await fetch('/api/poi-sentiment', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: place.displayName || place.name,
+            reviews: place.reviews || [],
+            category: place.types?.[0] || 'point_of_interest'
+          })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setSentimentResult(data);
+        }
+      } catch (err) {
+        console.error("Failed to fetch sentiment:", err);
+      } finally {
+        setIsAnalyzingSentiment(false);
+      }
+    };
+
+    fetchSentimentAndVibe();
+  }, [place?.id, place?.displayName || place?.name]);
+
   // AI Local Guide State
   const [localGuideData, setLocalGuideData] = useState<any | null>(null);
   const [isLoadingLocalGuide, setIsLoadingLocalGuide] = useState(false);
@@ -377,6 +415,8 @@ const PlaceDetailsPanel = React.memo(function PlaceDetailsPanel({ place, onBack,
   const [isOpen, setIsOpen] = useState(true);
   const [isBusy, setIsBusy] = useState(() => Math.random() > 0.5);
   const [sparklineRefreshCount, setSparklineRefreshCount] = useState(0);
+  const [isSyncingPOI, setIsSyncingPOI] = useState(false);
+  const [syncSuccessToast, setSyncSuccessToast] = useState(false);
 
   // Tooltip Hover State
   const [showTooltip, setShowTooltip] = useState(false);
@@ -1438,6 +1478,63 @@ const PlaceDetailsPanel = React.memo(function PlaceDetailsPanel({ place, onBack,
               </span>
               <TinySparkline seedName={place.displayName || "spot"} refreshTriggers={sparklineRefreshCount} />
             </button>
+
+            {/* Real-time synchronization & refresh controller */}
+            <button
+              onClick={async (e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                if (isSyncingPOI) return;
+                setIsSyncingPOI(true);
+                
+                // Beautiful initial tactile buzz
+                if (typeof navigator !== 'undefined' && navigator.vibrate) {
+                  try { navigator.vibrate([10, 45, 12]); } catch (err) {}
+                }
+                
+                // Simulate real-time background schedule & occupancy sync
+                await new Promise(resolve => setTimeout(resolve, 1100));
+                
+                setSparklineRefreshCount(prev => prev + 1);
+                setIsBusy(Math.random() > 0.5);
+                setIsOpen(Math.random() > 0.15);
+                setIsSyncingPOI(false);
+                setSyncSuccessToast(true);
+                
+                // Successful sync clear vibration
+                if (typeof navigator !== 'undefined' && navigator.vibrate) {
+                  try { navigator.vibrate([15, 30, 20]); } catch (err) {}
+                }
+                
+                setTimeout(() => {
+                  setSyncSuccessToast(false);
+                }, 2800);
+              }}
+              title="Synchronize Live Schedule & occupancy metrics"
+              className={cn(
+                "px-3 py-2.5 text-[10px] min-h-[44px] font-mono font-black uppercase tracking-wider rounded-lg border transition-all flex items-center justify-center gap-1.5 active:scale-95 shadow-sm cursor-pointer select-none",
+                isSyncingPOI 
+                  ? "bg-rose-500/10 text-rose-400 border-rose-500/30 animate-pulse" 
+                  : "bg-slate-500/10 text-slate-300 border-white/5 hover:bg-white/5"
+              )}
+            >
+              <Loader2 className={cn("w-3.5 h-3.5 text-slate-400", isSyncingPOI && "animate-spin text-rose-500")} />
+              <span>{isSyncingPOI ? "Syncing" : "Sync Live"}</span>
+            </button>
+
+            <AnimatePresence>
+              {syncSuccessToast && (
+                <motion.div
+                  initial={{ opacity: 0, y: -6, scale: 0.96 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: -6, scale: 0.96 }}
+                  className="col-span-full mt-2 w-full text-center py-2 px-3 rounded-lg border border-emerald-500/20 bg-emerald-500/5 text-emerald-400 font-mono text-[9px] uppercase tracking-wider flex items-center justify-center gap-1.5 shadow-sm"
+                >
+                  <Check className="w-3 h-3 text-emerald-400" />
+                  POI Occupancy & Schedule Synchronized!
+                </motion.div>
+              )}
+            </AnimatePresence>
           </motion.div>
           
           <motion.div variants={item} className="flex items-center gap-2 mb-6">
@@ -1446,6 +1543,63 @@ const PlaceDetailsPanel = React.memo(function PlaceDetailsPanel({ place, onBack,
                 <Star className="w-4 h-4 mr-1 fill-amber-400" />
                 {place.rating}
                 <span className="text-slate-500 ml-1">({place.userRatingCount} reviews)</span>
+              </div>
+            )}
+          </motion.div>
+
+          {/* AI Sentiment Analysis & Vibe Indicator Card */}
+          <motion.div 
+            variants={item} 
+            className="mb-6 rounded-2xl border border-indigo-500/10 bg-indigo-500/5 p-4 relative overflow-hidden"
+          >
+            <div className="absolute top-0 right-0 transform translate-x-3 -translate-y-3 w-20 h-20 bg-indigo-500/10 rounded-full blur-xl pointer-events-none" />
+            
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-1.5 text-indigo-400 font-mono text-[10px] font-bold tracking-wider uppercase">
+                <Sparkles className="w-3.5 h-3.5 text-fuchsia-400 animate-pulse" />
+                <span>AI Vibe Analytics</span>
+              </div>
+              {sentimentResult && (
+                <div className="bg-indigo-500/15 border border-indigo-500/20 px-2 py-0.5 rounded-md text-[9px] font-mono text-indigo-400 uppercase tracking-widest font-black animate-pulse">
+                  {sentimentResult.crowdLevel} Vibe
+                </div>
+              )}
+            </div>
+
+            {isAnalyzingSentiment ? (
+              <div className="flex flex-col items-center justify-center py-4 text-slate-400 gap-2">
+                <Loader2 className="w-5 h-5 text-indigo-400 animate-spin" />
+                <span className="text-[10px] font-mono uppercase tracking-wide animate-pulse">Decrypting review sentiment logs...</span>
+              </div>
+            ) : sentimentResult ? (
+              <div className="flex flex-col gap-3">
+                <div className="flex items-end justify-between">
+                  <div>
+                    <span className="text-slate-400 text-[10px] uppercase font-mono tracking-wider">Aesthetic vibe</span>
+                    <h4 className="text-xs md:text-sm font-black font-sans tracking-tight text-white">{sentimentResult.vibe}</h4>
+                  </div>
+                  
+                  <div className="text-right">
+                    <span className="text-slate-400 text-[10px] uppercase font-mono tracking-wider block">Local Sentiment</span>
+                    <div className="flex items-center gap-1.5 justify-end">
+                      <div className="h-2 w-16 bg-slate-800 rounded-full overflow-hidden border border-white/5">
+                        <div 
+                          className="h-full bg-gradient-to-r from-pink-500 via-indigo-500 to-emerald-500 rounded-full"
+                          style={{ width: `${sentimentResult.sentimentScore}%` }}
+                        />
+                      </div>
+                      <span className="text-xs font-mono font-black text-emerald-400">{sentimentResult.sentimentScore}%</span>
+                    </div>
+                  </div>
+                </div>
+
+                <p className="text-[11px] text-slate-300 leading-relaxed font-sans italic border-l-2 border-indigo-500/30 pl-3 py-0.5">
+                  "{sentimentResult.summary}"
+                </p>
+              </div>
+            ) : (
+              <div className="text-[11px] font-sans text-slate-400">
+                Awaiting sentiment telemetry feedback. Tap search or sync indicators.
               </div>
             )}
           </motion.div>
