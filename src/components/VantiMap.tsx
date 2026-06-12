@@ -4899,16 +4899,6 @@ const VantiMap = React.memo(function VantiMap() {
           </div>
         </div>
 
-        <div className="w-full flex flex-col gap-5 hidden relative z-[100]" id="vanti-search-nav-container">
-          <div className="w-full max-w-xl mx-auto pointer-events-auto relative z-[100] flex flex-col gap-4 mt-36 md:mt-16 px-4 md:px-0">
-              {/* Search input - Simplified */}
-              <div className="flex items-center gap-2 pointer-events-auto shadow-2xl rounded-[28px]">
-                 <div className="flex-1" id="vanti-search-nav">
-                   <PlacesAutocompleteInput onPlaceSelect={handlePlaceClick} />
-                 </div>
-              </div>
-          </div>
-        </div>
 
         {/* Bottom Navigation Bar Space Spacer */}
         <div className="absolute inset-x-0 bottom-0 p-4 h-1 flex flex-col items-center gap-4 pointer-events-none z-50">
@@ -6735,7 +6725,7 @@ const VantiMap = React.memo(function VantiMap() {
 
 export function SpatialTelemetry() {
   const mapViewport = useVantiStore((state) => state.mapViewport);
-  const [isHovered, setIsHovered] = useState(false);
+  const [isOpen, setIsOpen] = useState(false);
   
   if (!mapViewport?.center) return null;
 
@@ -6743,31 +6733,36 @@ export function SpatialTelemetry() {
 
   return (
     <motion.div 
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
-      className="vanti-glass px-4 py-2 rounded-2xl flex items-center gap-4 border-white/5 shadow-none backdrop-blur-3xl group cursor-default"
+      onClick={() => setIsOpen(!isOpen)}
+      className="vanti-glass px-4 py-2 rounded-2xl flex items-center gap-4 border-white/5 shadow-none backdrop-blur-3xl group cursor-pointer"
     >
       <div className="flex flex-col gap-0.5">
-        <span className="text-[8px] font-black text-rose-500 uppercase tracking-widest font-mono group-hover:animate-pulse">SPATIAL COORDS</span>
+        <span className="text-[8px] font-black text-rose-500 uppercase tracking-widest font-mono">
+          {isOpen ? 'PRECISION METRICS' : 'GEOLOCATION'}
+        </span>
         <div className="flex items-center gap-3">
           <div className="flex items-baseline gap-1">
             <span className="text-[10px] font-bold text-white/40 font-mono">LAT</span>
             <span className="text-[12px] font-black text-white font-mono tracking-tighter">
-              {lat.toFixed(6)}
+              {lat.toFixed(isOpen ? 6 : 4)}
             </span>
           </div>
-          <div className="w-[1px] h-3 bg-white/10" />
-          <div className="flex items-baseline gap-1">
-            <span className="text-[10px] font-bold text-white/40 font-mono">LNG</span>
-            <span className="text-[12px] font-black text-white font-mono tracking-tighter">
-              {lng.toFixed(6)}
-            </span>
-          </div>
+          {isOpen && (
+            <>
+              <div className="w-[1px] h-3 bg-white/10" />
+              <div className="flex items-baseline gap-1">
+                <span className="text-[10px] font-bold text-white/40 font-mono">LNG</span>
+                <span className="text-[12px] font-black text-white font-mono tracking-tighter">
+                  {lng.toFixed(6)}
+                </span>
+              </div>
+            </>
+          )}
         </div>
       </div>
       
       <AnimatePresence>
-        {isHovered && (
+        {isOpen && (
           <motion.div
             initial={{ width: 0, opacity: 0 }}
             animate={{ width: 'auto', opacity: 1 }}
@@ -6775,12 +6770,20 @@ export function SpatialTelemetry() {
             className="overflow-hidden flex items-center gap-3 border-l border-white/10 pl-3"
           >
              <div className="flex flex-col gap-0.5">
-                <span className="text-[8px] font-black text-emerald-400 uppercase tracking-widest font-mono">ELEVATION</span>
-                <span className="text-[12px] font-black text-white font-mono">124M MSL</span>
+                <span className="text-[8px] font-black text-emerald-400 uppercase tracking-widest font-mono">ALT</span>
+                <span className="text-[12px] font-black text-white font-mono">124M</span>
+             </div>
+             <div className="flex flex-col gap-0.5">
+                <span className="text-[8px] font-black text-blue-400 uppercase tracking-widest font-mono">HDG</span>
+                <span className="text-[12px] font-black text-white font-mono">352°</span>
              </div>
           </motion.div>
         )}
       </AnimatePresence>
+      
+      {!isOpen && (
+        <span className="text-[10px] text-white/20 font-bold ml-1">...</span>
+      )}
     </motion.div>
   );
 }

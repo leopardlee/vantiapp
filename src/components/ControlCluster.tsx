@@ -79,6 +79,9 @@ export function ControlCluster() {
   const setIsFinanceTrackerVisible = useVantiStore(state => state.setIsFinanceTrackerVisible);
   const setIsExportModalOpen = useVantiStore(state => state.setIsExportModalOpen);
 
+  const isVibeModeActive = useVantiStore(state => state.isVibeModeActive);
+  const setIsVibeModeActive = useVantiStore(state => state.setIsVibeModeActive);
+
   const toggleCluster = (id: string) => {
     triggerHaptic('switch');
     if (activeCluster === id) {
@@ -142,7 +145,7 @@ export function ControlCluster() {
       actions: [
         { id: 'insights-dr', icon: BarChart3, label: 'Insights', active: isInsightsDrawerOpen, onClick: () => setIsInsightsDrawerOpen?.(!isInsightsDrawerOpen) },
         { id: 'mode', icon: LayoutGrid, label: experienceMode, onClick: toggleExperienceMode },
-        { id: 'vibe', icon: Palette, label: moodLabel, onClick: cycleTravelStyle },
+        { id: 'vibescan', icon: Sparkles, label: 'Vibe Scan', active: isVibeModeActive, onClick: () => setIsVibeModeActive(!isVibeModeActive) },
         { id: 'radar', icon: Radio, label: 'Radar', active: isRadarActive, onClick: () => setIsRadarActive?.(!isRadarActive) },
         { id: 'refresh', icon: RefreshCw, label: 'Sync', active: isRefreshing, onClick: handleRefresh }
       ]
@@ -168,7 +171,7 @@ export function ControlCluster() {
       animate={{ opacity: isMapDragging ? 0.3 : 1, x: 0 }}
       transition={{ duration: 0.5, ease: [0.4, 0, 0.2, 1] }}
       className={cn(
-        "fixed md:top-1/2 md:-translate-y-1/2 md:left-6 left-6 bottom-32 z-[100] flex flex-col gap-3 transition-all duration-500",
+        "fixed md:top-1/2 md:-translate-y-1/2 md:left-6 left-6 bottom-40 z-[100] flex flex-col gap-3 transition-all duration-500",
         isMapDragging ? "pointer-events-none scale-95 blur-sm" : "pointer-events-auto"
       )}
     >

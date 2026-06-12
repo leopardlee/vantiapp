@@ -37,28 +37,17 @@ export interface VantiState {
   isTransitAlertsActive?: boolean;
   isRadarActive?: boolean;
   isExportModalOpen?: boolean;
-  setIsExportModalOpen?: (isOpen: boolean) => void;
   isLocalEventVisible?: boolean;
-  setIsLocalEventVisible?: (isVisible: boolean) => void;
   isPassportOpen?: boolean;
-  setIsPassportOpen?: (isOpen: boolean) => void;
   isJourneyRecapOpen?: boolean;
-  setIsJourneyRecapOpen?: (isOpen: boolean) => void;
   isVoiceSearchVisible?: boolean;
-  setIsVoiceSearchVisible?: (isVisible: boolean) => void;
   isFinanceTrackerVisible?: boolean;
-  setIsFinanceTrackerVisible?: (isVisible: boolean) => void;
   isMapOverlayVisible?: boolean;
-  setIsMapOverlayVisible?: (isVisible: boolean) => void;
   isSettingsOpen?: boolean;
-  setIsSettingsOpen?: (isOpen: boolean) => void;
   isMapDragging: boolean;
-  setIsMapDragging: (isDragging: boolean) => void;
-  quickPin: (lat: number, lng: number) => void;
   units: 'metric' | 'imperial';
   mapStyle: 'streets' | 'satellite';
   moodFilter: string | null;
-  setMoodFilter: (mood: string | null) => void;
   mapAesthetic: MapAesthetic;
   travelStyle: 'Minimalist' | 'Vibrant' | 'High-Contrast';
   language: 'en' | 'ko';
@@ -79,46 +68,17 @@ export interface VantiState {
   accessibilityScale: number;
   isPrefetchingEnabled: boolean;
   isBatterySaverEnabled: boolean;
-  setIsBatterySaverEnabled: (enabled: boolean) => void;
   isInsightsDrawerOpen: boolean;
-  setIsInsightsDrawerOpen: (isOpen: boolean) => void;
   isSwitchingMode: boolean;
-  setIsSwitchingMode: (isSwitching: boolean) => void;
   recentSearches: string[];
-  addRecentSearch: (term: string) => void;
   tripStats: {
-    totalDistance: number; // in km
+    totalDistance: number;
     landmarksVisited: number;
     weatherPreferences: Record<string, number>;
   };
-  addVisitedLandmark: () => void;
-  updateTotalDistance: (dist: number) => void;
-  recordWeatherPreference: (condition: string) => void;
   currentWeatherData: any | null;
   userLocation: google.maps.LatLngLiteral | null;
   peerLocations: Record<string, { lat: number, lng: number, displayName: string }>;
-  setPeerLocation: (uid: string, location: { lat: number, lng: number, displayName: string }) => void;
-  mapViewport: { center: { lat: number; lng: number }; bounds: { north: number; south: number; east: number; west: number } | null; zoom: number } | null;
-  viewportLandmarks: any[];
-  setViewportLandmarks: (landmarks: any[]) => void;
-  showAITripSidebar: boolean;
-  setShowAITripSidebar: (show: boolean) => void;
-  isGaussianActive: boolean;
-  setIsGaussianActive: (active: boolean) => void;
-  is3DActive: boolean;
-  setIs3DActive: (active: boolean) => void;
-  purgeInactiveAssets: () => void;
-  activeOverlays: string[];
-  addOverlay: (id: string) => void;
-  removeOverlay: (id: string) => void;
-  closeAllOverlays: () => void;
-  isEcoFriendly: boolean;
-  setIsEcoFriendly: (isEcoFriendly: boolean) => void;
-  communityMoments: any[];
-  setCommunityMoments: (moments: any[]) => void;
-  parsedReceipts?: any[];
-  isCrowdPulseActive?: boolean;
-  isVibeModeActive: boolean;
   friendsLocations: Record<string, { lat: number, lng: number, displayName: string, avatarUrl: string }>;
   userProfile?: {
     name: string;
@@ -129,6 +89,17 @@ export interface VantiState {
   markers: any[];
   weatherData: any | null;
   timePhase: string | null;
+  mapViewport: { center: { lat: number; lng: number }; bounds: { north: number; south: number; east: number; west: number } | null; zoom: number } | null;
+  viewportLandmarks: any[];
+  showAITripSidebar: boolean;
+  isGaussianActive: boolean;
+  is3DActive: boolean;
+  activeOverlays: string[];
+  isEcoFriendly: boolean;
+  communityMoments: any[];
+  parsedReceipts?: any[];
+  isCrowdPulseActive?: boolean;
+  isVibeModeActive: boolean;
   currentAreaVibe: {
     vibeTag: string;
     description: string;
@@ -214,6 +185,23 @@ export interface VantiActions {
   setTimePhase: (timePhase: string | null) => void;
   setCurrentAreaVibe: (vibe: any | null) => void;
   setIsVibeLoading: (loading: boolean) => void;
+  setIsBatterySaverEnabled: (enabled: boolean) => void;
+  setIsInsightsDrawerOpen: (isOpen: boolean) => void;
+  setIsSwitchingMode: (isSwitching: boolean) => void;
+  addVisitedLandmark: () => void;
+  updateTotalDistance: (dist: number) => void;
+  recordWeatherPreference: (condition: string) => void;
+  setPeerLocation: (uid: string, location: { lat: number, lng: number, displayName: string }) => void;
+  setIsGaussianActive: (active: boolean) => void;
+  setIs3DActive: (active: boolean) => void;
+  purgeInactiveAssets: () => void;
+  addOverlay: (id: string) => void;
+  removeOverlay: (id: string) => void;
+  closeAllOverlays: () => void;
+  setMoodFilter: (mood: string | null) => void;
+  setCommunityMoments: (moments: any[]) => void;
+  quickPin: (lat: number, lng: number) => void;
+  setIsMapDragging: (isDragging: boolean) => void;
 }
 
 type VantiStore = VantiState & VantiActions;
@@ -293,7 +281,7 @@ export const useVantiStore = create<VantiStore>()(
       setIsSettingsOpen: (isOpen) => set({ isSettingsOpen: isOpen }),
       isMapDragging: false,
       setIsMapDragging: (isDragging) => set({ isMapDragging: isDragging }),
-      quickPin: (lat, lng) => set((state) => {
+      quickPin: (lat, lng) => set((state: any) => {
         const newPin = {
           id: `pin-${Date.now()}`,
           lat,
@@ -329,16 +317,16 @@ export const useVantiStore = create<VantiStore>()(
         }
       },
       itinerary: [],
-      addToItinerary: (place) => set((state) => {
-        if (state.itinerary.find(p => p.id === place.id)) return state;
+      addToItinerary: (place) => set((state: any) => {
+        if (state.itinerary.find((p: any) => p.id === place.id)) return state;
         return { itinerary: [...state.itinerary, place] };
       }),
-      removeFromItinerary: (id) => set((state) => ({
-        itinerary: state.itinerary.filter(p => p.id !== id)
+      removeFromItinerary: (id) => set((state: any) => ({
+        itinerary: state.itinerary.filter((p: any) => p.id !== id)
       })),
       clearItinerary: () => set({ itinerary: [] }),
       setItinerary: (itinerary) => set({ itinerary }),
-      reorderItinerary: (startIndex, endIndex) => set((state) => {
+      reorderItinerary: (startIndex, endIndex) => set((state: any) => {
         const next = [...state.itinerary];
         const [removed] = next.splice(startIndex, 1);
         next.splice(endIndex, 0, removed);
@@ -351,7 +339,7 @@ export const useVantiStore = create<VantiStore>()(
       setWeatherLayerType: (weatherLayerType) => set({ weatherLayerType }),
       offlineAreas: [],
       isLocalAILoading: false,
-      addOfflineArea: (area) => set((state) => ({ 
+      addOfflineArea: (area) => set((state: any) => ({ 
         offlineAreas: [...state.offlineAreas, { ...area, id: Math.random().toString(36).substr(2, 9), createdAt: Date.now() }] 
       })),
       setLocalAILoading: (isLocalAILoading) => set({ isLocalAILoading }),
@@ -362,12 +350,12 @@ export const useVantiStore = create<VantiStore>()(
       markers: [],
       setMarkers: (markers) => set({ markers }),
       weatherData: null,
-      timePhase: 'day',
-      currentAreaVibe: null,
-      isVibeLoading: false,
       setWeatherData: (weatherData) => set({ weatherData }),
+      timePhase: 'day',
       setTimePhase: (timePhase) => set({ timePhase }),
+      currentAreaVibe: null,
       setCurrentAreaVibe: (currentAreaVibe) => set({ currentAreaVibe }),
+      isVibeLoading: false,
       setIsVibeLoading: (isVibeLoading) => set({ isVibeLoading }),
       addCustomMarker: (marker) => set((state) => ({ customMarkers: [...state.customMarkers, marker] })),
       removeCustomMarker: (id) => set((state) => ({ customMarkers: state.customMarkers.filter(m => m.id !== id) })),

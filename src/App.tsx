@@ -118,30 +118,11 @@ export default function App() {
     }
   }, [setIsInitializing]);
 
-  const mapElement = useMemo(() => {
-    if (!hasValidKey) {
-      return (
-        <div 
-          className="flex flex-col items-center justify-center p-10 text-slate-500 w-full bg-slate-900/50"
-          style={{ height: 'calc(var(--vh, 1vh) * 100)' }}
-        >
-          <span className="text-[10px] font-black tracking-widest text-[#f43f5e] uppercase mb-2">MAP ENVIRONMENT UNConfigured</span>
-          <span className="text-[8px] font-mono tracking-widest uppercase text-slate-400">Map loading restricted (API Key missing)</span>
-        </div>
-      );
-    }
-    return (
-      <APIProvider key={language} apiKey={API_KEY} version="weekly" language={language}>
-        <MapReadyBoundary />
-      </APIProvider>
-    );
-  }, [language]);
-
-  return (
-    <ViewportProvider>
+  const appContent = useMemo(() => {
+    const layout = (
       <VantiGlobalShell bottomNavigation={<BottomNavigation />}>
         <FriendsLocationListener />
-        {mapElement}
+        <MapReadyBoundary />
         <WowExperienceLayer />
         <ControlCluster />
         <LeftOperationsPanel />
@@ -158,6 +139,30 @@ export default function App() {
           <LocalEventNotifier />
         </Suspense>
       </VantiGlobalShell>
+    );
+
+    if (!hasValidKey) {
+      return (
+        <div 
+          className="flex flex-col items-center justify-center p-10 text-slate-500 w-full bg-slate-900/50"
+          style={{ height: 'calc(var(--vh, 1vh) * 100)' }}
+        >
+          <span className="text-[10px] font-black tracking-widest text-[#f43f5e] uppercase mb-2">MAP ENVIRONMENT UNConfigured</span>
+          <span className="text-[8px] font-mono tracking-widest uppercase text-slate-400">Map loading restricted (API Key missing)</span>
+        </div>
+      );
+    }
+
+    return (
+      <APIProvider key={language} apiKey={API_KEY} version="weekly" language={language}>
+        {layout}
+      </APIProvider>
+    );
+  }, [language]);
+
+  return (
+    <ViewportProvider>
+      {appContent}
     </ViewportProvider>
   );
 }

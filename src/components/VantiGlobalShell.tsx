@@ -16,6 +16,7 @@ const GaussianSplatOverlay = lazy(() => import('./GaussianSplatOverlay').then(m 
 
 import { AreaVibeOverlay } from './AreaVibeOverlay';
 import { SpatialTelemetry } from './VantiMap';
+import { PlacesAutocompleteInput } from './PlacesAutocompleteInput';
 import { cn } from '../lib/utils';
 import { BarChart3 } from 'lucide-react';
 
@@ -59,8 +60,9 @@ export function VantiGlobalShell({ children, bottomNavigation }: VantiGlobalShel
   
   const isAROpen = useVantiStore((state) => state.isAROpen);
   const isGaussianActive = useVantiStore((state) => state.isGaussianActive);
-  const isGaussianActiveStore = useVantiStore((state) => state.isGaussianActive); // Duplicate for safety if needed, but let's just use one.
   const setIsAROpen = useVantiStore((state) => state.setIsAROpen);
+  const setSelectedPlace = useVantiStore((state) => state.setSelectedPlace);
+  const recenterToUser = useVantiStore((state) => state.recenterToUser);
   
   const isAtmosphereOpen = useVantiStore((state) => state.isAtmosphereOpen);
   const setIsAtmosphereOpen = useVantiStore((state) => state.setIsAtmosphereOpen!);
@@ -273,7 +275,6 @@ export function VantiGlobalShell({ children, bottomNavigation }: VantiGlobalShel
 
       {/* Persistent Base Layer for Map */}
       <div className="absolute inset-0 z-0 overflow-hidden">
-        <AreaVibeOverlay />
         <AnimatePresence mode="wait">
           <motion.div
             key={activeMode}
@@ -302,15 +303,25 @@ export function VantiGlobalShell({ children, bottomNavigation }: VantiGlobalShel
         }}
       >
         {/* Top HUD Cluster */}
-        <div className="p-6 flex justify-between items-start">
-           <div className="flex flex-col gap-4 pointer-events-auto">
-              <VantiBrandLogo />
-              <div className="flex items-start gap-4">
+        <div className="p-4 md:p-6 flex flex-col md:flex-row justify-between items-start gap-4">
+           <div className="flex flex-col md:flex-row items-start md:items-center gap-4 pointer-events-auto w-full md:w-auto">
+              <div className="flex items-center gap-3 w-full md:w-auto">
+                <VantiBrandLogo />
+                <div className="flex-1 md:w-64 lg:w-96 max-w-md">
+                  <PlacesAutocompleteInput onPlaceSelect={(place) => {
+                    setSelectedPlace(place);
+                    const lat = typeof place.location?.lat === 'function' ? place.location.lat() : place.location?.lat;
+                    const lng = typeof place.location?.lng === 'function' ? place.location.lng() : place.location?.lng;
+                    if (lat && lng) recenterToUser(lat, lng);
+                  }} />
+                </div>
+              </div>
+              <div className="flex items-center gap-3 overflow-x-auto pb-2 md:pb-0 w-full md:w-auto contents-none hide-scrollbar">
                  <AreaVibeOverlay />
                  <SpatialTelemetry />
               </div>
            </div>
-           <div className="pointer-events-auto">
+           <div className="pointer-events-auto self-end md:self-auto">
               <CloudStatusIndicator status={cloudStatus} />
            </div>
         </div>
@@ -318,7 +329,7 @@ export function VantiGlobalShell({ children, bottomNavigation }: VantiGlobalShel
         <div className="flex-1" />
 
         {/* Bottom Persistent Navigation */}
-        <footer className="w-full flex justify-center pb-8 md:pb-12 px-6 pointer-events-none">
+        <footer className="w-full flex justify-center pb-24 md:pb-12 px-6 pointer-events-none">
            <div className="pointer-events-auto">
               {bottomNavigation}
            </div>
@@ -364,13 +375,14 @@ function VantiBrandLogo() {
 function CloudStatusIndicator({ status }: { status: boolean | 'loading' }) {
   return (
     <div className={cn(
-      "px-4 py-2 rounded-2xl vanti-glass flex items-center gap-2 border-white/5 shadow-none transition-colors duration-500",
+      "px-3 py-2 rounded-2xl vanti-glass flex items-center gap-2 border-white/5 shadow-none transition-colors duration-500",
       status === true ? 'text-emerald-400' : status === false ? 'text-rose-400' : 'text-white/20'
     )}>
       <div className="w-1.5 h-1.5 rounded-full bg-current animate-pulse-soft" />
       <span className="text-[10px] font-black tracking-widest uppercase font-mono">
-        {status === true ? 'LINK ESTABLISHED' : status === false ? 'LOCAL MODE' : 'SYNCING...'}
+        {status === true ? '' : status === false ? 'OFFLINE' : 'SYNCING...'}
       </span>
+      {status === true && <Check className="w-3 h-3" />}
     </div>
   );
 }
