@@ -145,6 +145,7 @@ export function ControlCluster() {
         { id: 'insights-dr', icon: BarChart3, label: 'Insights', active: isInsightsDrawerOpen, onClick: () => setIsInsightsDrawerOpen?.(!isInsightsDrawerOpen) },
         { id: 'mode', icon: LayoutGrid, label: experienceMode, onClick: toggleExperienceMode },
         { id: 'vibe', icon: Palette, label: moodLabel, onClick: cycleTravelStyle },
+        { id: 'smart-mood', icon: Sparkles, label: 'Smart Mood', active: useVantiStore(state => state.isVibeModeActive), onClick: () => useVantiStore.getState().setIsVibeModeActive?.(!useVantiStore.getState().isVibeModeActive) },
         { id: 'radar', icon: Radio, label: 'Radar', active: isRadarActive, onClick: () => setIsRadarActive?.(!isRadarActive) },
         { id: 'refresh', icon: RefreshCw, label: 'Refresh', active: isRefreshing, onClick: handleRefresh }
       ]

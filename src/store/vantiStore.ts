@@ -57,6 +57,8 @@ export interface VantiState {
   quickPin: (lat: number, lng: number) => void;
   units: 'metric' | 'imperial';
   mapStyle: 'streets' | 'satellite';
+  moodFilter: string | null;
+  setMoodFilter: (mood: string | null) => void;
   mapAesthetic: MapAesthetic;
   travelStyle: 'Minimalist' | 'Vibrant' | 'High-Contrast';
   language: 'en' | 'ko';
@@ -116,11 +118,17 @@ export interface VantiState {
   setCommunityMoments: (moments: any[]) => void;
   parsedReceipts?: any[];
   isCrowdPulseActive?: boolean;
+  isVibeModeActive: boolean;
+  friendsLocations: Record<string, { lat: number, lng: number, displayName: string, avatarUrl: string }>;
   userProfile?: {
     name: string;
     avatarUrl: string;
     snsProvider?: string;
   };
+  activeSmartItinerary?: any | null;
+  markers: any[];
+  weatherData: any | null;
+  timePhase: string | null;
 }
 
 export interface VantiActions {
@@ -155,6 +163,8 @@ export interface VantiActions {
   removeParsedReceipt?: (id: string) => void;
   clearParsedReceipts?: () => void;
   setIsCrowdPulseActive?: (active: boolean) => void;
+  setIsVibeModeActive: (active: boolean) => void;
+  setFriendsLocations: (locations: Record<string, { lat: number, lng: number, displayName: string, avatarUrl: string }>) => void;
   setUserProfile?: (profile: { name: string; avatarUrl: string; snsProvider?: string } | undefined) => void;
   setIsSettingsOpen?: (isOpen: boolean) => void;
   setUnits: (units: 'metric' | 'imperial') => void;
@@ -191,6 +201,10 @@ export interface VantiActions {
   addRecentSearch: (term: string) => void;
   setMapViewport: (viewport: { center: { lat: number; lng: number }; bounds: { north: number; south: number; east: number; west: number } | null; zoom: number } | null) => void;
   setViewportLandmarks: (landmarks: any[]) => void;
+  setActiveSmartItinerary: (it: any | null) => void;
+  setMarkers: (markers: any[]) => void;
+  setWeatherData: (weatherData: any | null) => void;
+  setTimePhase: (timePhase: string | null) => void;
 }
 
 type VantiStore = VantiState & VantiActions;
@@ -254,6 +268,10 @@ export const useVantiStore = create<VantiStore>()(
       clearParsedReceipts: () => set({ parsedReceipts: [] }),
       isCrowdPulseActive: false,
       setIsCrowdPulseActive: (active) => set({ isCrowdPulseActive: active }),
+      isVibeModeActive: false,
+      setIsVibeModeActive: (active) => set({ isVibeModeActive: active }),
+      friendsLocations: {},
+      setFriendsLocations: (friendsLocations) => set({ friendsLocations }),
       userProfile: {
         name: 'Guest Traveler',
         avatarUrl: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=150&q=80',
@@ -285,6 +303,8 @@ export const useVantiStore = create<VantiStore>()(
       setMapStyle: (mapStyle) => set({ mapStyle }),
       travelStyle: 'Minimalist',
       setTravelStyle: (travelStyle) => set({ travelStyle }),
+      moodFilter: null,
+      setMoodFilter: (moodFilter) => set({ moodFilter }),
       mapAesthetic: typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'night' : 'none',
       setMapAesthetic: (mapAesthetic) => set({ mapAesthetic }),
       isEcoFriendly: false,
@@ -330,6 +350,12 @@ export const useVantiStore = create<VantiStore>()(
       setRoutingOrigin: (routingOrigin) => set({ routingOrigin }),
       bookmarkedPlaces: {},
       customMarkers: [],
+      markers: [],
+      setMarkers: (markers) => set({ markers }),
+      weatherData: null,
+      timePhase: 'day',
+      setWeatherData: (weatherData) => set({ weatherData }),
+      setTimePhase: (timePhase) => set({ timePhase }),
       addCustomMarker: (marker) => set((state) => ({ customMarkers: [...state.customMarkers, marker] })),
       removeCustomMarker: (id) => set((state) => ({ customMarkers: state.customMarkers.filter(m => m.id !== id) })),
       toggleBookmark: (place) => set((state) => {
@@ -390,6 +416,8 @@ export const useVantiStore = create<VantiStore>()(
       setMapViewport: (mapViewport) => set({ mapViewport }),
       viewportLandmarks: [],
       setViewportLandmarks: (viewportLandmarks) => set({ viewportLandmarks }),
+      activeSmartItinerary: null,
+      setActiveSmartItinerary: (activeSmartItinerary) => set({ activeSmartItinerary }),
       isCinematicMode: false,
       setIsCinematicMode: (isCinematicMode) => set({ isCinematicMode }),
       travelMood: 'normal',
@@ -475,6 +503,8 @@ export const useVantiStore = create<VantiStore>()(
         recentSearches: state.recentSearches,
         parsedReceipts: state.parsedReceipts,
         isCrowdPulseActive: state.isCrowdPulseActive,
+        isVibeModeActive: state.isVibeModeActive,
+        friendsLocations: state.friendsLocations,
         userProfile: state.userProfile
       }),
     }

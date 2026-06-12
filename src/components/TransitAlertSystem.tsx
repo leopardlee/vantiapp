@@ -34,41 +34,47 @@ export function TransitAlertSystem() {
       return;
     }
 
-    // Capture first and second stop names
-    const stop1 = itinerary[0]?.displayName || itinerary[0]?.name || 'Stop 1';
-    const stop2 = itinerary[1]?.displayName || itinerary[1]?.name || 'Stop 2';
+    const fetchDelays = async () => {
+        // Use first stop as a proxy location
+        const stop = itinerary[0];
+        const lat = stop?.location?.lat || 37.5665;
+        const lng = stop?.location?.lng || 126.9780;
 
-    // Generate highly relevant simulated delays based on actual stops in the itinerary!
-    const mockAlerts = [
-      {
-        id: 'alert-1',
-        type: 'transit',
-        severity: 'critical',
-        title: 'Signaling Delay: Metro Line 4',
-        message: `A signal malfunction near transit corridors leading to *${stop1}* has suspended line service. Expect +18 mins delays.`,
-        minutes: 18,
-        affectedStop: stop1,
-        icon: Train,
-        color: '#f43f5e'
-      },
-      {
-        id: 'alert-2',
-        type: 'weather',
-        severity: 'warning',
-        title: 'Heavy Rainfall Warning',
-        message: `Localized downpours detected around *${stop2}*. Ground surfaces are slippery, causing pedestrian speeds to drop by 30%.`,
-        minutes: 12,
-        affectedStop: stop2,
-        icon: CloudRain,
-        color: '#eab308'
-      }
-    ];
+        try {
+            const response = await fetch('/api/predict-transit-delays', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ lat, lng })
+            });
 
-    setActiveAlerts(mockAlerts);
+            if (!response.ok) throw new Error('Failed to fetch alerts');
+            const data = await response.json();
+            
+            const alerts = data.delays.map((d: any, idx: number) => ({
+                id: `alert-${idx}`,
+                type: 'transit',
+                severity: d.delayMinutes > 15 ? 'critical' : 'warning',
+                title: `Delay: ${d.affectedRouteName}`,
+                message: d.cause,
+                minutes: d.delayMinutes,
+                affectedStop: stop?.displayName || stop?.name || 'Current Stop',
+                icon: Train,
+                color: d.delayMinutes > 15 ? '#f43f5e' : '#eab308'
+            }));
 
-    // Trigger transient HUD notification toast if a new alert comes in
-    setToastMessage(`Safety Corridor Sync: 2 active delay vectors identified targeting your itinerary!`);
-    setShowToast(true);
+            setActiveAlerts(alerts);
+            if (alerts.length > 0) {
+                setToastMessage(`Safety Corridor Sync: ${alerts.length} active delay vectors identified targeting your itinerary!`);
+                setShowToast(true);
+            }
+        } catch (err) {
+            console.error("Transit API failed, using fallback:", err);
+            setActiveAlerts([]);
+        }
+    };
+
+    fetchDelays();
+
     const timer = setTimeout(() => setShowToast(false), 6000);
     return () => clearTimeout(timer);
   }, [itinerary.length]);

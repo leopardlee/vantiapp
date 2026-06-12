@@ -7,6 +7,7 @@ export type TimePhase = 'dawn' | 'day' | 'dusk' | 'night';
 export function useThemeManager(): { isDarkMode: boolean; timePhase: TimePhase } {
   const userLocation = useVantiStore((state) => state.userLocation);
   const mapViewport = useVantiStore((state) => state.mapViewport);
+  const setMapAesthetic = useVantiStore((state) => state.setMapAesthetic);
   const themeOverride = useVantiStore((state) => state.themeOverride);
   
   const [isDarkMode, setIsDarkMode] = useState(true);
@@ -73,7 +74,14 @@ export function useThemeManager(): { isDarkMode: boolean; timePhase: TimePhase }
         else if (timePhase === 'night') mapTheme.setStyles('Deep Midnight');
         else mapTheme.setStyles('Default');
     }
-  }, [timePhase]);
+    
+    // Automatically set map aesthetic based on phase
+    if (themeOverride === 'Auto') {
+        if (timePhase === 'night') setMapAesthetic('night');
+        else if (timePhase === 'day') setMapAesthetic('none');
+        else setMapAesthetic('contrast'); // Default/dusk/dawn
+    }
+  }, [timePhase, themeOverride, setMapAesthetic]);
 
   return { isDarkMode, timePhase };
 }

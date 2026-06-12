@@ -1,5 +1,5 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
-import { getAuth, GoogleAuthProvider, signInWithPopup, signOut } from "firebase/auth";
+import { getAuth, GoogleAuthProvider, FacebookAuthProvider, OAuthProvider, signInWithPopup, signOut } from "firebase/auth";
 import { initializeFirestore, doc, getDocFromServer, collection, setDoc, query, where, getDocs, deleteDoc } from "firebase/firestore";
 import { getMessaging, getToken, onMessage, Messaging } from "firebase/messaging";
 import firebaseConfig from "../../firebase-applet-config.json";
@@ -9,7 +9,11 @@ export const auth = getAuth(app);
 export const db = initializeFirestore(app, {
   experimentalForceLongPolling: true,
 }, (firebaseConfig as any).firestoreDatabaseId);
+
 export const googleProvider = new GoogleAuthProvider();
+export const facebookProvider = new FacebookAuthProvider();
+export const appleProvider = new OAuthProvider('apple.com');
+export const kakaoProvider = new OAuthProvider('oidc.kakao'); // Standard OIDC id if configured, or can fallback
 
 export let isCloudConnected = false;
 let onCloudStatusChange: (status: boolean) => void = () => {};
@@ -104,6 +108,36 @@ export const loginWithGoogle = async () => {
         return result.user;
     } catch (error) {
         console.error("Firebase login failed", error);
+        throw error;
+    }
+};
+
+export const loginWithFacebook = async () => {
+    try {
+        const result = await signInWithPopup(auth, facebookProvider);
+        return result.user;
+    } catch (error) {
+        console.error("Firebase Facebook login failed", error);
+        throw error;
+    }
+};
+
+export const loginWithApple = async () => {
+    try {
+        const result = await signInWithPopup(auth, appleProvider);
+        return result.user;
+    } catch (error) {
+        console.error("Firebase Apple login failed", error);
+        throw error;
+    }
+};
+
+export const loginWithKakao = async () => {
+    try {
+        const result = await signInWithPopup(auth, kakaoProvider);
+        return result.user;
+    } catch (error) {
+        console.error("Firebase Kakao login failed", error);
         throw error;
     }
 };

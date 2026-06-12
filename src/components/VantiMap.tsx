@@ -22,12 +22,19 @@ import { StatusIndicator } from './StatusIndicator';
 import { LandmarkMarker } from './LandmarkMarker';
 import { CommunityActivityLayer } from './CommunityActivityLayer';
 import { SafeAdvancedMarker, MapErrorBoundary } from './SafeAdvancedMarker';
+import { ItineraryLayer } from './ItineraryLayer';
+import { NavigationFlyout } from './NavigationFlyout';
+// import { AtmosphericOverlay } from './AtmosphericOverlay';
+import { SocialVibeOverlay } from './SocialVibeOverlay';
+import { MoodFilterWidget } from './MoodFilterWidget';
+import { ARPreviewWidget } from './ARPreviewWidget';
 import RouteDisplay from './RouteDisplay';
 import ItineraryLegsDisplay from './ItineraryLegsDisplay';
 import RoutePlannerPanel from './RoutePlannerPanel';
 import { MemoryTrailLayer } from './MemoryTrailLayer';
 import { MemoryReplayViewer } from './MemoryReplayViewer';
 import { AtmosphereD3Overlay } from './AtmosphereD3Overlay';
+import { AtmosphericEngineOverlay } from './AtmosphericEngineOverlay';
 import Chatbot from './Chatbot';
 import InfoBubble from './InfoBubble';
 import { MapRadialMenu } from './MapRadialMenu';
@@ -984,6 +991,8 @@ const VantiMap = React.memo(function VantiMap() {
   const geometryLib = useMapsLibrary('geometry');
 
   const activeMode = useVantiStore((state) => state.activeMode);
+  const is3DActive = useVantiStore((state) => state.is3DActive);
+  const setIs3DActive = useVantiStore((state) => state.setIs3DActive);
   const setActiveMode = useVantiStore((state) => state.setActiveMode);
   const isCrowdPulseActive = useVantiStore((state) => state.isCrowdPulseActive);
   const setIsCrowdPulseActive = useVantiStore((state) => state.setIsCrowdPulseActive);
@@ -1052,6 +1061,7 @@ const VantiMap = React.memo(function VantiMap() {
   }, [suggestion]);
 
   const showControls = useVantiStore((state) => state.showControls);
+  const userProfile = useVantiStore((state) => state.userProfile);
   const isBatterySaverEnabled = useVantiStore((state) => state.isBatterySaverEnabled);
   const setShowControls = useVantiStore((state) => state.setShowControls);
   const themeOverride = useVantiStore((state) => state.themeOverride);
@@ -1090,8 +1100,42 @@ const VantiMap = React.memo(function VantiMap() {
 
   const t = getTranslation(language);
 
-  const is3DActive = useVantiStore((state) => state.is3DActive);
-  const setIs3DActive = useVantiStore((state) => state.setIs3DActive);
+  const isVibeModeActive = useVantiStore((state) => state.isVibeModeActive);
+  const setMarkers = useVantiStore((state) => state.setMarkers); // Assuming this exists or similar
+  const originalMarkers = useRef<any[]>([]); // Need to keep original markers to restore them
+
+  useEffect(() => {
+    async function filterMarkers() {
+        if (isVibeModeActive) {
+            // Save original markers if not already saved
+            if (originalMarkers.current.length === 0) {
+                originalMarkers.current = [...(useVantiStore.getState().markers || [])];
+            }
+            
+            try {
+                const response = await fetch('/api/vibe-filter-pois', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        pois: originalMarkers.current, 
+                        vibe: travelMood 
+                    })
+                });
+                const filtered = await response.json();
+                useVantiStore.setState({ markers: filtered });
+            } catch (err) {
+                console.error("Vibe filter failed", err);
+            }
+        } else {
+            // Restore markers
+            if (originalMarkers.current.length > 0) {
+                useVantiStore.setState({ markers: originalMarkers.current });
+                originalMarkers.current = [];
+            }
+        }
+    }
+    filterMarkers();
+  }, [isVibeModeActive, travelMood]);
   const isGaussianActive = useVantiStore((state) => state.isGaussianActive);
   const setIsGaussianActive = useVantiStore((state) => state.setIsGaussianActive);
   const [isMapIdle, setIsMapIdle] = useState(false);
@@ -3227,7 +3271,26 @@ const VantiMap = React.memo(function VantiMap() {
       });
   }, [savedPlaces, activeFilter]);
 
-  const filteredLandmarks = (activeFilter === 'all' || activeFilter === 'landmarks') ? viewportLandmarks : [];
+  const moodFilter = useVantiStore((state) => state.moodFilter);
+
+  // Derive filtered landmarks based on mood
+  const moodFilteredLandmarks = useMemo(() => {
+    if (!moodFilter) return viewportLandmarks;
+    return viewportLandmarks.filter(m => {
+      const types = m.types || [];
+      const typesStr = types.join(' ').toLowerCase();
+      if (moodFilter === 'Energizing') {
+        return typesStr.includes('gym') || typesStr.includes('cafe') || typesStr.includes('night_club') || typesStr.includes('amusement');
+      } else if (moodFilter === 'Peaceful') {
+        return typesStr.includes('park') || typesStr.includes('spa') || typesStr.includes('library') || typesStr.includes('museum') || typesStr.includes('art');
+      } else if (moodFilter === 'Social') {
+        return typesStr.includes('bar') || typesStr.includes('restaurant') || typesStr.includes('cafe') || typesStr.includes('event');
+      }
+      return true;
+    });
+  }, [viewportLandmarks, moodFilter]);
+
+  const filteredLandmarks = (activeFilter === 'all' || activeFilter === 'landmarks') ? moodFilteredLandmarks : [];
 
   // High performance spatial grid clustering for saved places
   const clusteredSavedPlaces = useMemo(() => {
@@ -3352,7 +3415,12 @@ const VantiMap = React.memo(function VantiMap() {
   return (
     <div 
       className="relative w-full h-screen bg-[#0a0c10] overflow-hidden select-none text-slate-100 font-sans"
-      style={{ fontSize: `${16 * accessibilityScale}px` } as React.CSSProperties}
+      style={{ 
+        fontSize: `${16 * accessibilityScale}px`,
+        height: '100vh',
+        minHeight: '100%',
+        width: '100%'
+      } as React.CSSProperties}
     >
       <OnboardingTour />
        {/* Toast Notification Engine */}
@@ -3504,6 +3572,7 @@ const VantiMap = React.memo(function VantiMap() {
         }
         transition={{ duration: 0.4, ease: "easeInOut" }}
         className="absolute inset-0 w-full h-full"
+        style={{ height: '100%', width: '100%', top: 0, left: 0 }}
       >
       <div 
         className="absolute inset-0 w-full h-full transition-all duration-700 ease-in-out"
@@ -3668,7 +3737,7 @@ const VantiMap = React.memo(function VantiMap() {
             rotateControl: true,
             tiltControl: true,
             keyboardShortcuts: true,
-            styles: getActiveMapStyle()
+            styles: MAP_ID ? undefined : getActiveMapStyle()
           }}
           internalUsageAttributionIds={['gmp_mcp_codeassist_v1_aistudio']}
           className="absolute inset-0 w-full h-full"
@@ -4398,16 +4467,22 @@ const VantiMap = React.memo(function VantiMap() {
                   animate={{ scale: 4.8, opacity: 0, borderWidth: "1.5px" }}
                   exit={{ opacity: 0 }}
                   transition={{ duration: 3.5, ease: [0.1, 0.8, 0.25, 1] }}
-                  className="absolute w-12 h-12 rounded-full border-blue-400 bg-blue-500/10 pointer-events-none"
+                  className="absolute w-12 h-12 rounded-full border-blue-400 bg-blue-500/10 pointer-events-none -z-10"
                 />
               </AnimatePresence>
 
-              <div className="w-8 h-8 rounded-full bg-blue-500/20 flex items-center justify-center animate-pulse z-10">
-                <div className="w-4 h-4 rounded-full bg-blue-500 border-2 border-white shadow-lg"></div>
+              <div className="w-9 h-9 rounded-full overflow-hidden border-[2.5px] border-white shadow-[0_0_15px_rgba(59,130,246,0.6)] flex items-center justify-center z-10 bg-[#090b15]">
+                {(auth.currentUser?.photoURL || userProfile?.avatarUrl) ? (
+                  <img src={auth.currentUser?.photoURL || userProfile?.avatarUrl} alt="You" referrerPolicy="no-referrer" className="w-full h-full object-cover" />
+                ) : (
+                  <div className="w-5 h-5 rounded-full bg-blue-500 shadow-inner" />
+                )}
               </div>
             </div>
           </SafeAdvancedMarker>
         )}
+
+        <ItineraryLayer map={map} markerLib={markerLib} isMapIdle={isMapIdle} />
 
         {/* Custom User Markers Layer */}
         {isMapIdle && map && markerLib && customMarkers.map((cm: any) => (
@@ -4443,7 +4518,18 @@ const VantiMap = React.memo(function VantiMap() {
         ))}
 
         {/* Custom Animated Trending Pins Layer */}
-        {showTrendingPins && isMapIdle && map && markerLib && trendingPlaces.map((place: any, idx: number) => {
+        {showTrendingPins && isMapIdle && map && markerLib && trendingPlaces.filter((m: any) => {
+          if (!moodFilter) return true;
+          const cat = (m.category || '').toLowerCase();
+          if (moodFilter === 'Energizing') {
+            return cat.includes('gym') || cat.includes('cafe') || cat.includes('club') || cat.includes('amusement') || cat.includes('shopping') || cat.includes('active');
+          } else if (moodFilter === 'Peaceful') {
+            return cat.includes('park') || cat.includes('spa') || cat.includes('library') || cat.includes('museum') || cat.includes('art') || cat.includes('nature') || cat.includes('landmark');
+          } else if (moodFilter === 'Social') {
+            return cat.includes('bar') || cat.includes('restaurant') || cat.includes('cafe') || cat.includes('event') || cat.includes('culture');
+          }
+          return true;
+        }).map((place: any, idx: number) => {
           return (
             <SafeAdvancedMarker
               key={`trending-pin-${place.id}`}
@@ -4977,68 +5063,11 @@ const VantiMap = React.memo(function VantiMap() {
 
       <QuickPhrasesOverlay />
 
-      {/* Consolidated Top Status HUD Console Bar with 4 aligned interactable status indicator dots */}
-      <div className="fixed top-5 left-1/2 -translate-x-1/2 z-[250] flex items-center justify-center p-1.5 px-3.5 bg-[#090b15]/80 backdrop-blur-3xl border border-white/20 hover:border-indigo-500/50 rounded-full shadow-[0_16px_50px_rgba(0,0,0,0.8),inset_0_1px_1px_rgba(255,255,255,0.2)] pointer-events-auto gap-4 md:gap-5 transition-all">
-        <StatusIndicator 
-          id="neural-link"
-          label="Link Stable"
-          dotColor="emerald"
-          icon={Globe}
-          tooltipTitle="Neural Link Status"
-          tooltipDescription="System synchronization is robust. Your neural link to the Vanti data grid is established and optimized for real-time spatial processing."
-          metrics={[
-            { label: 'Latency', value: '0.04ms' },
-            { label: 'Sync Rate', value: '1.2GB/s' },
-            { label: 'Security', value: 'Quantum-Safe' }
-          ]}
-        />
-
-        <StatusIndicator 
-          id="gps-lock"
-          label="GPS Locked"
-          dotColor="cyan"
-          icon={Navigation}
-          tooltipTitle="Satellite Precision"
-          tooltipDescription="Orbital triangulation active. Current position accuracy is within 0.1 meters via high-density constellation link."
-          metrics={[
-            { label: 'Satellites', value: '32 Active' },
-            { label: 'Precision', value: '±0.1m' },
-            { label: 'Datum', value: 'WGS84-V' }
-          ]}
-        />
-
-        <StatusIndicator 
-          id="network-grid"
-          label="Grid Active"
-          dotColor="indigo"
-          icon={Sparkles}
-          tooltipTitle="Vanti Data Grid"
-          tooltipDescription="Connected to the global Vanti Mesh. Map tiles and real-time transit telemetry are synchronized via distributed edge nodes."
-          metrics={[
-            { label: 'Node', value: 'VANTI-ASIA-01' },
-            { label: 'Bandwidth', value: 'Unlimited' },
-            { label: 'Packets', value: 'Zero Drop' }
-          ]}
-        />
-
-        <StatusIndicator 
-          id="vector-spatial"
-          label={isMapTilesLoading ? "Vector Indexing" : "Mesh Synced"}
-          dotColor={isMapTilesLoading ? "rose" : "amber"}
-          pulse={isMapTilesLoading}
-          tooltipTitle={isMapTilesLoading ? "Spatial Engine Active" : "Spatial Mesh Synced"}
-          tooltipDescription={isMapTilesLoading 
-            ? "The spatial mesh is being recalculated. Vanti is indexing high-resolution map tiles and vector geometry for the current sector." 
-            : "The spatial mesh calculation is complete. Vanti is rendering 3D buildings, localized telemetry grids, and active route boundaries."}
-          metrics={[
-            { label: 'Kernels', value: isMapTilesLoading ? 'Recalculating...' : '1.2M Configured' },
-            { label: 'Density', value: 'High' },
-            { label: 'Status', value: isMapTilesLoading ? 'Indexing...' : 'Active & Stable' }
-          ]}
-        />
-      </div>
-
       {/* Pinch to Zoom gesture helper indicator */}
+      <NavigationFlyout />
+      <MoodFilterWidget />
+      <ARPreviewWidget />
+      <AtmosphericEngineOverlay weather={activeWeather} lat={userLocation?.lat || mapCenter.lat || 0} />
       <AnimatePresence>
         {showPinchHelper && (
           <motion.div
@@ -6587,6 +6616,8 @@ const VantiMap = React.memo(function VantiMap() {
     </AnimatePresence>
 
     {/* Immersive Sci-Fi Map-Style HUD Transition Overlay - REMOVED AS PER USER REQUEST */}
+    <AtmosphericOverlay weather={currentWeatherData} />
+    <SocialVibeOverlay />
     
     <GestureOnboarding />
 

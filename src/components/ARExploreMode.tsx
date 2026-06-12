@@ -49,6 +49,7 @@ export function ARExploreMode() {
   const userLocation = useVantiStore(state => state.userLocation);
   const addToItinerary = useVantiStore(state => state.addToItinerary);
   const itinerary = useVantiStore(state => state.itinerary || []);
+  const travelMood = useVantiStore(state => state.travelMood);
   
   const [heading, setHeading] = useState(120); // Default simulated heading in degrees
   const [isSwiping, setIsSwiping] = useState(false);
@@ -56,6 +57,16 @@ export function ARExploreMode() {
   const headingStartRef = useRef<number>(0);
   
   const [selectedNode, setSelectedNode] = useState<any | null>(null);
+
+  // Pulse effect based on travel mood
+  const moodPulse = React.useMemo(() => {
+    switch (travelMood) {
+        case 'adventure': return 'animate-pulse bg-orange-500/20';
+        case 'relaxation': return 'animate-pulse-slow bg-blue-500/20';
+        case 'culinary': return 'animate-pulse bg-yellow-500/20';
+        default: return 'bg-transparent';
+    }
+  }, [travelMood]);
 
   // Fallback landmarks if map is not loaded / viewport is empty
   const fallbackLandmarks = [
@@ -253,6 +264,7 @@ export function ARExploreMode() {
             className="fixed inset-0 z-[200] bg-black overflow-hidden flex flex-col justify-end select-none cursor-grab active:cursor-grabbing font-sans"
           >
              {/* Dynamic Video Stream Background or Visual Cyber Matrix Layer */}
+             <div className={cn("absolute inset-0 transition-all duration-1000", moodPulse)} />
              <video 
                ref={videoRef}
                playsInline

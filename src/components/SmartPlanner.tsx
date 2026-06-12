@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Sparkles, Loader2, Calendar, MapPin, Coffee, Info, ChevronRight, X, TrendingUp } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { CostDonutChart } from './CostDonutChart';
+import { useVantiStore } from '../store/vantiStore';
 
 interface ItineraryStop {
   name: string;
@@ -45,7 +46,8 @@ export const SmartPlanner = ({ bookmarks, travelHistory, onClose }: SmartPlanner
         body: JSON.stringify({
           bookmarks,
           travelHistory,
-          preferences: { travelMood: 'exploration' }
+          preferences: { travelMood: 'exploration' },
+          language: useVantiStore.getState().language
         })
       });
 

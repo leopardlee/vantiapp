@@ -37,29 +37,59 @@ export default function RouteDisplay({
     onRouteInfoUpdate?.(routeInfo);
   }, [routeInfo, onRouteInfoUpdate]);
 
-  // Route Deviation Check
+  const lastWaypointVibrateRef = useRef<number>(0);
+
+  // Route Deviation & Waypoint Proximity Check
   useEffect(() => {
-    if (!geometryLib || !userLocation || polylinesRef.current.length === 0 || !onDeviate) return;
+    if (!geometryLib || !userLocation || polylinesRef.current.length === 0) return;
     
     const now = Date.now();
-    if (now - lastDeviateTimeRef.current < 5000) return; // Wait 5s between haptics
-
     const latLng = new google.maps.LatLng(userLocation.lat, userLocation.lng);
     let isOnRoute = false;
     
-    for (const poly of polylinesRef.current) {
-        // tolerance in degrees approx, 0.0002 is about 20m
-        if (geometryLib.poly.isLocationOnEdge(latLng, poly, 0.0002)) {
-            isOnRoute = true;
-            break;
+    if (onDeviate && now - lastDeviateTimeRef.current >= 5000) {
+      for (const poly of polylinesRef.current) {
+          // tolerance in degrees approx, 0.0002 is about 20m
+          if (geometryLib.poly.isLocationOnEdge(latLng, poly, 0.0002)) {
+              isOnRoute = true;
+              break;
+          }
+      }
+      
+      if (!isOnRoute) {
+          if (typeof navigator !== 'undefined' && navigator.vibrate) {
+            // Three distinct, harsh buzzes for deviation guidance
+            navigator.vibrate([150, 50, 150, 50, 300]);
+          }
+          onDeviate();
+          lastDeviateTimeRef.current = now;
+      }
+    }
+
+    // Check Waypoint proximity
+    if (now - lastWaypointVibrateRef.current >= 30000) { // Limit to once per 30s
+      let nearWaypoint = false;
+      const checkDist = (pt: any) => {
+        if (!pt) return;
+        const ptLoc = typeof pt === 'string' ? null : new google.maps.LatLng(typeof pt.lat === 'function' ? pt.lat() : pt.lat, typeof pt.lng === 'function' ? pt.lng() : pt.lng);
+        if (ptLoc && geometryLib.spherical.computeDistanceBetween(latLng, ptLoc) < 50) {
+          nearWaypoint = true;
         }
+      };
+
+      checkDist(origin);
+      checkDist(destination);
+      waypoints.forEach(w => checkDist(w));
+
+      if (nearWaypoint) {
+        if (typeof navigator !== 'undefined' && navigator.vibrate) {
+          // Distinct, rhythmic triple pulse for waypoint arrival
+          navigator.vibrate([200, 50, 200, 50, 200]);
+        }
+        lastWaypointVibrateRef.current = now;
+      }
     }
-    
-    if (!isOnRoute) {
-        onDeviate();
-        lastDeviateTimeRef.current = now;
-    }
-  }, [userLocation, geometryLib, onDeviate]);
+  }, [userLocation, geometryLib, origin, destination, waypoints, onDeviate]);
 
   useEffect(() => {
     if (!map || !origin || !destination) return;

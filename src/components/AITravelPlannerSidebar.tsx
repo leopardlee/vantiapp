@@ -1,6 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useVantiStore } from '../store/vantiStore';
+import { db, auth } from '../lib/firebase';
+import { doc, getDoc, collection, addDoc, query, where, getDocs, orderBy, serverTimestamp } from 'firebase/firestore';
 import { 
   X, 
   Sparkles, 
@@ -20,7 +22,10 @@ import {
   TrendingUp,
   Bus,
   Footprints,
-  Compass
+  Compass,
+  Archive,
+  Eye,
+  Clock
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useResponsiveLayout } from '../hooks/useResponsiveLayout';
@@ -35,16 +40,70 @@ export function AITravelPlannerSidebar() {
   const setSelectedPlace = useVantiStore((state) => state.setSelectedPlace);
   const recenterToUser = useVantiStore((state) => state.recenterToUser);
   const viewportLandmarks = useVantiStore((state) => state.viewportLandmarks || []);
+  const setActiveSmartItinerary = useVantiStore((state) => state.setActiveSmartItinerary);
   const t = useVantiStore((state) => state.t);
 
   // Navigational tab state
-  const [aiTab, setAITab] = useState<'itinerary' | 'radar'>('itinerary');
+  const [aiTab, setAITab] = useState<'itinerary' | 'radar' | 'archive'>('itinerary');
+
+  // Archive state
+  const [archivedItineraries, setArchivedItineraries] = useState<any[]>([]);
+  const [isArchiveLoading, setIsArchiveLoading] = useState(false);
+
+  const fetchArchive = async () => {
+    if (!auth.currentUser) return;
+    setIsArchiveLoading(true);
+    try {
+      const q = query(
+        collection(db, 'users', auth.currentUser.uid, 'smart_itineraries'),
+        orderBy('createdAt', 'desc')
+      );
+      const snap = await getDocs(q);
+      const items: any[] = [];
+      snap.forEach(doc => {
+        items.push({ id: doc.id, ...doc.data() });
+      });
+      setArchivedItineraries(items);
+    } catch (e) {
+      console.error("Error fetching arcvhive:", e);
+    } finally {
+      setIsArchiveLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (aiTab === 'archive') {
+      fetchArchive();
+    }
+  }, [aiTab]);
 
   // Daily Itinerary variables
   const [days, setDays] = useState<number>(1);
   const [selectedInterests, setSelectedInterests] = useState<string[]>(['Food & Cafes', 'Historic Sites']);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [itineraryResult, setItineraryResult] = useState<any | null>(null);
+
+  useEffect(() => {
+    if (showAITripSidebar) {
+      const fetchInterests = async () => {
+        if (auth.currentUser) {
+          try {
+            const userDoc = await getDoc(doc(db, 'users', auth.currentUser.uid));
+            if (userDoc.exists()) {
+              const data = userDoc.data();
+              if (data.interests && data.interests.length > 0) {
+                // Map frontend interest IDs back to full labels if desired, or just use as is
+                setSelectedInterests(data.interests);
+              }
+            }
+          } catch (e) {
+            console.error("Error fetching interests:", e);
+          }
+        }
+      };
+      fetchInterests();
+    }
+  }, [showAITripSidebar]);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   // Viewport radar variables
@@ -96,6 +155,21 @@ export function AITravelPlannerSidebar() {
 
       const data = await response.json();
       setItineraryResult(data);
+      setActiveSmartItinerary(data);
+      
+      // Save to archive if authenticated
+      if (auth.currentUser) {
+        try {
+          await addDoc(collection(db, 'users', auth.currentUser.uid, 'smart_itineraries'), {
+            ...data,
+            daysCount: days,
+            interests: selectedInterests,
+            createdAt: serverTimestamp()
+          });
+        } catch (e) {
+          console.error("Failed to archive itinerary:", e);
+        }
+      }
     } catch (err: any) {
       console.error(err);
       setErrorMsg('Failed to fetch optimized travel itinerary. Utilizing smart local fallbacks.');
@@ -236,7 +310,7 @@ export function AITravelPlannerSidebar() {
               </div>
 
               {/* Sub tabs selector */}
-              <div className="grid grid-cols-2 gap-2 mt-4 bg-slate-950/60 p-1 rounded-xl border border-white/5">
+              <div className="grid grid-cols-3 gap-2 mt-4 bg-slate-950/60 p-1 rounded-xl border border-white/5">
                 <button
                   onClick={() => setAITab('itinerary')}
                   className={cn(
@@ -245,7 +319,7 @@ export function AITravelPlannerSidebar() {
                   )}
                 >
                   <Calendar className="w-3.5 h-3.5" />
-                  <span>Smart Planner</span>
+                  <span className="hidden sm:inline">Planner</span>
                 </button>
                 <button
                   onClick={() => setAITab('radar')}
@@ -255,7 +329,17 @@ export function AITravelPlannerSidebar() {
                   )}
                 >
                   <Compass className="w-3.5 h-3.5" />
-                  <span>Live POI Radar</span>
+                  <span className="hidden sm:inline">Radar</span>
+                </button>
+                <button
+                  onClick={() => setAITab('archive')}
+                  className={cn(
+                    "py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5",
+                    aiTab === 'archive' ? "bg-purple-600 border-purple-500 text-white shadow-md shadow-purple-600/10" : "text-slate-400 hover:text-white"
+                  )}
+                >
+                  <Archive className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Archive</span>
                 </button>
               </div>
             </div>
@@ -263,6 +347,51 @@ export function AITravelPlannerSidebar() {
             {/* Content Core Scroll Area */}
             <div className="flex-1 overflow-y-auto min-h-0 custom-scrollbar p-6 space-y-6">
               
+              {/* TAB 3: ARCHIVE */}
+              {aiTab === 'archive' && (
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Archive className="w-4 h-4 text-purple-400" />
+                    <h3 className="text-white text-sm font-bold tracking-tight">Smart Itinerary Archive</h3>
+                  </div>
+                  {isArchiveLoading ? (
+                    <div className="flex-col items-center justify-center py-6 flex">
+                      <Loader2 className="w-6 h-6 text-purple-400 animate-spin mb-3" />
+                      <span className="text-xs text-slate-500">Loading history...</span>
+                    </div>
+                  ) : archivedItineraries.length === 0 ? (
+                    <div className="bg-slate-900/50 p-4 rounded-xl border border-white/5 text-center">
+                      <p className="text-slate-400 text-xs">No saved itineraries found. Generate one in the Planner tab.</p>
+                    </div>
+                  ) : (
+                    archivedItineraries.map((itinerary, i) => (
+                      <div key={itinerary.id} className="bg-white/5 rounded-xl border border-white/10 p-4 transition-all hover:bg-white/10 flex flex-col gap-2">
+                         <div className="flex justify-between items-start">
+                           <span className="text-xs font-bold text-white">Smart Plan - {itinerary.daysCount} Days</span>
+                           <span className="text-[10px] text-slate-500 border border-slate-700 px-1.5 rounded">{itinerary.createdAt?.toDate?.().toLocaleDateString() || 'Recently'}</span>
+                         </div>
+                         <div className="flex items-center gap-2 flex-wrap text-[10px] uppercase font-mono text-slate-400">
+                           {itinerary.interests?.map((int: any) => (
+                             <span key={int} className="bg-slate-900 px-1.5 rounded text-purple-400">{int}</span>
+                           ))}
+                         </div>
+                         {/* Toggle visibility */}
+                         <button 
+                           onClick={() => {
+                             setActiveSmartItinerary(itinerary);
+                             setItineraryResult(itinerary);
+                             setAITab('itinerary');
+                           }}
+                           className="mt-2 w-full py-2 bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 rounded-lg text-xs font-bold border border-purple-500/30 flex justify-center items-center gap-2 transition-colors"
+                         >
+                           <Eye className="w-3.5 h-3.5" /> View on Map
+                         </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+
               {/* TAB 1: SMART PLANNER */}
               {aiTab === 'itinerary' && (
                 <>
@@ -369,7 +498,10 @@ export function AITravelPlannerSidebar() {
                       <div className="flex items-center justify-between">
                         <span className="text-[10px] uppercase tracking-wider font-bold text-slate-400 font-mono">Suggested Plan ({days} Days)</span>
                         <button
-                          onClick={() => setItineraryResult(null)}
+                          onClick={() => {
+                            setItineraryResult(null);
+                            setActiveSmartItinerary(null);
+                          }}
                           className="text-xs font-bold text-purple-400 hover:text-purple-300 transition-colors"
                         >
                           Configure New Plan

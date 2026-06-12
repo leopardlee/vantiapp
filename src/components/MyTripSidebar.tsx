@@ -22,6 +22,8 @@ import {
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { CloseButton } from './CloseButton';
+import { db, auth } from '../lib/firebase';
+import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 
 import { useResponsiveLayout } from '../hooks/useResponsiveLayout';
 
@@ -530,8 +532,6 @@ export function MyTripSidebar({ isOpen, onClose }: { isOpen: boolean; onClose: (
                     onClick={async () => {
                       setIsSavingJournal(true);
                       try {
-                        const { auth, db } = await import('../lib/firebase');
-                        const { collection, addDoc, serverTimestamp } = await import('firebase/firestore');
                         if (!auth.currentUser) {
                           alert('Please login to save to journal');
                           return;

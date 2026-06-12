@@ -153,6 +153,20 @@
         "createdAt": { "type": "number" }
       },
       "required": ["question", "options", "votes", "createdBy", "createdAt"]
+    },
+    "CommunityVibe": {
+      "title": "CommunityVibe",
+      "description": "Real-time community activity vibe indicator",
+      "type": "object",
+      "properties": {
+        "lat": { "type": "number" },
+        "lng": { "type": "number" },
+        "type": { "type": "string" },
+        "intensity": { "type": "number" },
+        "content": { "type": "string" },
+        "timestamp": { "type": "number" }
+      },
+      "required": ["lat", "lng", "timestamp"]
     }
   },
   "firestore": {
@@ -207,6 +221,10 @@
     "groupTrips/{tripId}/polls/{pollId}": {
       "schema": { "$ref": "Poll" },
       "description": "Interactive polls within a group trip"
+    },
+    "community_vibes/{vibeId}": {
+      "schema": { "$ref": "CommunityVibe" },
+      "description": "Real-time community activity vibe indicator"
     },
     "_vanti_health/{id}": {
       "schema": { "type": "object", "properties": {} },

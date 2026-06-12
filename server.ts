@@ -219,10 +219,13 @@ async function startServer() {
   // Smart Planner: Generate 3-day itinerary using Gemini
   app.post("/api/smart-planner/itinerary", async (req, res) => {
     try {
-      const { bookmarks, travelHistory, preferences } = req.body;
+      const { bookmarks, travelHistory, preferences, language } = req.body;
+      const langContext = language === 'ko' ? 'Korean' : 'English';
       
       const prompt = `
         You are an advanced AI travel curator. Based on the following user data, create a highly personalized 3-day travel itinerary.
+        
+        User Language Preference: ${langContext}
         
         User Bookmarks (Places they are interested in):
         ${JSON.stringify(bookmarks)}
@@ -241,6 +244,7 @@ async function startServer() {
            - For each stop, provide a name, approximate time of day, and a 'why' (reasoning based on their profile).
            - Provide one 'Cultural Pro-Tip' per day specific to the primary location/city.
            - Estimate a total daily spend (budget) in USD.
+           - Write all content in ${langContext}.
 
         Provide the response in raw JSON format with the following structure:
         {
@@ -448,6 +452,38 @@ Respond ONLY with a clean JSON object containing an array of hotspots. DO NOT in
     }
   });
 
+  // Predict transit delays
+  app.post("/api/predict-transit-delays", async (req, res) => {
+    try {
+      const { lat, lng } = req.body;
+      const prompt = `You are a futuristic transit and crowd density analyzer.
+Analyzed Center Location: Latitude ${lat}, Longitude ${lng}.
+
+Analyze potential transit delays for this area based on predicted high-traffic social events, weather patterns, and urban density.
+Generate a JSON object predicting transit delays for major lines in this vicinity.
+Include:
+- delayMinutes: (integer) predicted delay in minutes.
+- cause: (brief description, e.g., "Social media reports of local festival crowding at nearby station", "Weather-induced surface traffic slowing down buses")
+- affectedRouteName: (string)
+Respond ONLY in JSON.
+{
+  "delays": [{ "affectedRouteName": "String", "delayMinutes": number, "cause": "String" }]
+}
+`;
+      const response = await generateContentWithFallback({
+        model: 'gemini-3.5-flash',
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json"
+        }
+      });
+      res.json(JSON.parse(response.text || "{\"delays\": []}"));
+    } catch (err: any) {
+      console.log("Transit delay prediction error:", err);
+      res.status(500).json({ error: "Failed to predict transit delays" });
+    }
+  });
+
   // Trip Summary AI generator
   app.post("/api/summarize-log", async (req, res) => {
     try {
@@ -514,6 +550,87 @@ Respond ONLY with a clean JSON object containing an array of hotspots. DO NOT in
           { name: "Coffee Roasting Masterclass", reason: "Similar to places you frequently interact with.", lat: 0, lng: 0 }
         ] 
       });
+    }
+  });
+
+  // Social Vibe Map Overlay
+  app.post("/api/social-vibe", async (req, res) => {
+    try {
+      const { lat, lng } = req.body;
+      const prompt = `Analyze social media trends and location sentiment for coordinates Lat: ${lat}, Lng: ${lng}.
+      Generate a JSON object with:
+      - "intensity": (number 0-1) representing social buzz (trending vs quiet).
+      - "description": (string) brief reason for intensity.
+      Only return JSON.
+      { "intensity": number, "description": string }`;
+      
+      const response = await generateContentWithFallback({
+        model: 'gemini-3.5-flash',
+        contents: prompt,
+        config: { responseMimeType: "application/json" }
+      });
+      res.json(JSON.parse(response.text || '{"intensity": 0.5, "description": "Normal activity"}'));
+    } catch (e) {
+      res.json({ intensity: 0.5, description: "Data unavailable" });
+    }
+  });
+
+  // AI Travel Log - Photo Analysis
+  app.post("/api/analyze-travel-photo", async (req, res) => {
+    try {
+      const { image, location } = req.body;
+      const prompt = `Analyze this travel photo taken at ${JSON.stringify(location)}.
+      Generate a captioned narrative (100 characters max) suitable for a travel log entry.
+      Only return the narrative string.`;
+      
+      const response = await generateContentWithFallback({
+        model: 'gemini-3.5-flash',
+        contents: [
+            { text: prompt },
+            { inlineData: { mimeType: "image/jpeg", data: image } }
+        ]
+      });
+      res.json({ narrative: response.text?.trim() });
+    } catch (e) {
+      res.status(500).json({ error: "Analysis failed" });
+    }
+  });
+
+  // Atmospheric Visual Filter
+  app.post("/api/atmospheric-filter", async (req, res) => {
+    try {
+      const { weather, timePhase } = req.body;
+      const prompt = `Based on weather '${weather?.main}' at '${timePhase}', suggest a CSS visual filter/overlay style name for a map: e.g., 'foggy', 'golden-glow', 'rainy-dim', 'clear-bright'. Return ONLY the string name.`;
+      const response = await generateContentWithFallback({
+        model: 'gemini-3.5-flash',
+        contents: prompt
+      });
+      res.json({ filter: response.text?.trim() });
+    } catch (err: any) {
+      console.log("Atmospheric filter error:", err);
+      res.json({ filter: 'default' });
+    }
+  });
+
+  // Vibe Filter POIs
+  app.post("/api/vibe-filter-pois", async (req, res) => {
+    try {
+      const { pois, vibe } = req.body;
+      const prompt = `Given these points of interest: ${JSON.stringify(pois)}.
+      Filter and recommend top POIs that match the vibe: '${vibe}'.
+      Respond ONLY with a JSON array of the original POI objects that are the best match, ordered by relevance.`;
+      
+      const response = await generateContentWithFallback({
+        model: 'gemini-3.5-flash',
+        contents: prompt,
+        config: {
+            responseMimeType: "application/json"
+        }
+      });
+      res.json(JSON.parse(response.text || "[]"));
+    } catch (err: any) {
+      console.log("Vibe filter error:", err);
+      res.status(500).json({ error: "Failed to filter POIs by vibe" });
     }
   });
 
@@ -991,6 +1108,7 @@ Format:
     }
   });
 
+
   // Trip planner endpoint
   app.post("/api/plan-trip", async (req, res) => {
     try {
@@ -1047,6 +1165,35 @@ Format:
         });
       }
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  // AI Vibe Scheduler
+  app.post("/api/vibe-schedule", async (req, res) => {
+    try {
+      const { itinerary, vibe } = req.body;
+      const prompt = `You are a city vibe and crowd scheduling expert.
+Analyze the following itinerary: ${JSON.stringify(itinerary)}.
+User selected Vibe: ${vibe}.
+
+Suggest start times for each stop to maximize the 'vibe' experience based on:
+1. Historical crowd data trends in similar cities.
+2. Vibe matching (e.g., if vibe is Peaceful, schedule for morning hours; if Energizing, schedule for peak).
+
+Return a JSON array of the same length as the itinerary, with "startTime" (e.g., "10:00 AM") and "vibeReason" (reasoning for this time).
+Only return the raw JSON array.`;
+
+      const response = await generateContentWithFallback({
+        model: 'gemini-3.5-flash',
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json"
+        }
+      });
+      res.json(JSON.parse(response.text || "[]"));
+    } catch (err: any) {
+      console.log("Vibe schedule error:", err);
+      res.status(500).json({ error: "Failed to schedule based on vibe" });
     }
   });
 

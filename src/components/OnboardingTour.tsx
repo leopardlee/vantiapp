@@ -57,6 +57,9 @@ const PRESET_AVATARS = [
   'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=150&q=80'
 ];
 
+import { loginWithGoogle, loginWithFacebook, loginWithApple, loginWithKakao, db, auth } from '../lib/firebase';
+import { doc, setDoc } from 'firebase/firestore';
+
 export const OnboardingTour: React.FC = () => {
   const [currentStep, setCurrentStep] = useState<number>(-1); // -1 means welcome/login screen
   const [isVisible, setIsVisible] = useState(false);
@@ -71,6 +74,16 @@ export const OnboardingTour: React.FC = () => {
   const [snsProvider, setSnsProvider] = useState<string | null>(userProfile?.snsProvider || null);
   const [tempSnsSyncing, setTempSnsSyncing] = useState<string | null>(null);
   
+  // Questionnaire state
+  const [selectedInterests, setSelectedInterests] = useState<string[]>([]);
+  const INTEREST_OPTIONS = [
+    { id: 'adventure', label: 'Adventure & Outdoors' },
+    { id: 'foodie', label: 'Culinary & Foodie' },
+    { id: 'relaxing', label: 'Relaxing & Wellness' },
+    { id: 'culture', label: 'Art & Culture' },
+    { id: 'nightlife', label: 'Nightlife & Events' }
+  ];
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -113,8 +126,7 @@ export const OnboardingTour: React.FC = () => {
     }
   };
 
-  const handleComplete = () => {
-    // Save customized profile to the store before finishing
+  const handleComplete = async () => {
     if (setUserProfile) {
       setUserProfile({
         name: nickname,
@@ -122,6 +134,21 @@ export const OnboardingTour: React.FC = () => {
         snsProvider: snsProvider || 'None'
       });
     }
+
+    // Save to Firestore if user is authenticated
+    if (auth.currentUser) {
+      try {
+        await setDoc(doc(db, 'users', auth.currentUser.uid), {
+          displayName: nickname,
+          photoURL: selectedAvatar,
+          interests: selectedInterests,
+          updatedAt: new Date().toISOString()
+        }, { merge: true });
+      } catch (e) {
+        console.error("Failed to save user profile to Firestore", e);
+      }
+    }
+
     setIsVisible(false);
     localStorage.setItem('vanti_tour_seen', 'true');
   };
@@ -138,23 +165,50 @@ export const OnboardingTour: React.FC = () => {
     localStorage.setItem('vanti_tour_seen', 'true');
   };
 
-  const triggerSnsLogin = (provider: string) => {
+  const triggerSnsLogin = async (provider: string) => {
     setTempSnsSyncing(provider);
+    
+    try {
+      let user;
+      if (provider === 'Google') {
+        user = await loginWithGoogle();
+      } else if (provider === 'Facebook') {
+        user = await loginWithFacebook();
+      } else if (provider === 'Apple') {
+        user = await loginWithApple();
+      } else if (provider === 'KakaoTalk') {
+        user = await loginWithKakao();
+      }
+      
+      if (user) {
+        setSnsProvider(provider);
+        setNickname(user.displayName || user.email?.split('@')[0] || 'Vanti Nomad');
+        if (user.photoURL) {
+          setSelectedAvatar(user.photoURL);
+        }
+        setTempSnsSyncing(null);
+        return;
+      }
+    } catch (e) {
+      console.warn("Real OAuth failed, falling back to mock UI to avoid blocking onboarding...", e);
+    }
+
+    // Fallback Mock Behavior if actual Firebase Auth fails or is not perfectly configured for the provider
     setTimeout(() => {
       setSnsProvider(provider);
       setTempSnsSyncing(null);
       // Auto-extract mock profile info for immersion
       if (provider === 'Google') {
-        setNickname('Alex Jordan');
+        setNickname('Alex Jordan (Demo)');
         setSelectedAvatar('https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80');
       } else if (provider === 'Apple') {
-        setNickname('Chris Evans');
+        setNickname('Chris Evans (Demo)');
         setSelectedAvatar('https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=150&q=80');
       } else if (provider === 'KakaoTalk') {
-        setNickname('은우 (Kakao)');
+        setNickname('은우 (Kakao Demo)');
         setSelectedAvatar('https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?auto=format&fit=crop&w=150&q=80');
       } else if (provider === 'Facebook') {
-        setNickname('Jessie Miller');
+        setNickname('Jessie Miller (Demo)');
         setSelectedAvatar('https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=150&q=80');
       }
     }, 1200);
@@ -361,19 +415,78 @@ export const OnboardingTour: React.FC = () => {
                   Skip Nodes
                 </button>
                 <button 
-                  onClick={() => {
-                    if (setUserProfile) {
-                      setUserProfile({
-                        name: nickname,
-                        avatarUrl: selectedAvatar,
-                        snsProvider: snsProvider || 'Guest'
-                      });
-                    }
-                    setCurrentStep(0);
-                  }}
+                  onClick={() => setCurrentStep(-2)}
                   className="flex-[2] py-3 px-6 rounded-2xl bg-indigo-500 text-white text-xs font-black uppercase tracking-widest shadow-xl shadow-indigo-500/20 active:scale-95 transition-all pointer-events-auto flex items-center justify-center gap-1"
                 >
-                  Register Profile & Train
+                  Configure Interests
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        ) : currentStep === -2 ? (
+          <motion.div
+            key="interests"
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -20 }}
+            className="absolute inset-0 bg-[#060810]/90 backdrop-blur-md flex items-center justify-center pointer-events-auto p-4"
+          >
+             <motion.div 
+              initial={{ scale: 0.94, y: 15 }}
+              animate={{ scale: 1, y: 0 }}
+              className="max-w-lg w-full p-6 md:p-8 bg-[#090b15]/90 border border-white/10 rounded-[2.5rem] shadow-[0_30px_100px_rgba(0,0,0,0.9)] space-y-6 backdrop-blur-2xl"
+            >
+              <div className="flex flex-col items-center gap-4 border-b border-white/5 pb-4 text-center">
+                <div className="w-14 h-14 bg-rose-500/10 border border-rose-500/20 rounded-2xl flex items-center justify-center shadow-[0_0_30px_rgba(244,63,94,0.2)] shrink-0">
+                  <Star className="w-7 h-7 text-rose-400" />
+                </div>
+                <div>
+                  <h2 className="text-2xl font-black text-white uppercase tracking-tighter italic">Travel Preferences</h2>
+                  <p className="text-slate-400 text-xs">Select your core interests to prime the Gemini-powered AI Assistant</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 py-4">
+                {INTEREST_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.id}
+                    onClick={() => {
+                      setSelectedInterests(prev => 
+                        prev.includes(opt.id) ? prev.filter(id => id !== opt.id) : [...prev, opt.id]
+                      );
+                    }}
+                    className={cn(
+                      "flex items-center gap-3 p-4 rounded-2xl border transition-all pointer-events-auto",
+                      selectedInterests.includes(opt.id)
+                        ? "bg-rose-500/20 border-rose-500/50 text-rose-300"
+                        : "bg-white/5 border-white/10 text-slate-400 hover:bg-white/10"
+                    )}
+                  >
+                    <div className={cn(
+                      "w-5 h-5 rounded-md border flex items-center justify-center shrink-0 transition-colors",
+                      selectedInterests.includes(opt.id) ? "bg-rose-500 border-rose-400 text-white" : "border-slate-600"
+                    )}>
+                      {selectedInterests.includes(opt.id) && <Check className="w-3.5 h-3.5" />}
+                    </div>
+                    <span className="text-xs font-bold leading-tight text-left">{opt.label}</span>
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button 
+                  onClick={() => setCurrentStep(-1)}
+                  className="flex-1 py-3 px-6 rounded-2xl bg-white/5 text-slate-500 text-xs font-black uppercase tracking-widest hover:text-slate-300 transition-colors pointer-events-auto"
+                >
+                  Back
+                </button>
+                <button 
+                  onClick={() => setCurrentStep(0)}
+                  disabled={selectedInterests.length === 0}
+                  className="flex-[2] py-3 px-6 rounded-2xl bg-indigo-500 text-white text-xs font-black uppercase tracking-widest shadow-xl shadow-indigo-500/20 active:scale-95 transition-all pointer-events-auto flex items-center justify-center gap-1 disabled:opacity-50"
+                >
+                  Start Agent Training
                   <ChevronRight className="w-4 h-4" />
                 </button>
               </div>

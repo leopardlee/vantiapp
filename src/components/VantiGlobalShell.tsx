@@ -21,6 +21,7 @@ interface VantiGlobalShellProps {
 export function VantiGlobalShell({ children, bottomNavigation }: VantiGlobalShellProps) {
   const travelStyle = useVantiStore((state) => state.travelStyle);
   const isInitializing = useVantiStore((state) => state.isInitializing);
+  const setIsInitializing = useVantiStore((state) => state.setIsInitializing);
   const { isDarkMode, timePhase } = useThemeManager();
   const [activeStep, setActiveStep] = useState(0);
   const [cloudStatus, setCloudStatus] = useState<boolean | 'loading'>('loading');
@@ -80,6 +81,16 @@ export function VantiGlobalShell({ children, bottomNavigation }: VantiGlobalShel
       setCloudStatus(connected);
     });
   }, []);
+
+  // Safety loading screen dismiss fallback
+  useEffect(() => {
+    if (isInitializing) {
+      const timer = setTimeout(() => {
+        setIsInitializing(false);
+      }, 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [isInitializing, setIsInitializing]);
 
   // Cycle through high-precision status messages while initializing
   useEffect(() => {

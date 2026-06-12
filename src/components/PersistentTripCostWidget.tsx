@@ -1,5 +1,6 @@
-import React, { useMemo, useState, useRef } from 'react';
+import React, { useMemo, useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { useVantiStore } from '../store/vantiStore';
 import { Wallet, Utensils, Ticket, Train, Info, X, Sparkles, Upload, FileText, Loader2, Trash2, Hotel, ChevronDown, ChevronUp } from 'lucide-react';
 import { cn } from '../lib/utils';
@@ -16,6 +17,7 @@ export function PersistentTripCostWidget() {
   const [isParserOpen, setIsParserOpen] = useState(false);
   const [pasteText, setPasteText] = useState('');
   const [isParsing, setIsParsing] = useState(false);
+  const [showBudgetToast, setShowBudgetToast] = useState(false);
   const [selectedTab, setSelectedTab] = useState<'text' | 'file'>('text');
   const [uploadError, setUploadError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -94,6 +96,18 @@ export function PersistentTripCostWidget() {
       total: (dining + attractions + transit + stay) * currency.rate
     };
   }, [itinerary, currency, parsedReceipts]);
+
+  // Monitor budget
+  useEffect(() => {
+    const budget = 5000;
+    const usage = stats.total / budget;
+    if (usage >= 0.8 && usage < 0.85) { // Trigger only when crossing
+        setShowBudgetToast(true);
+        if (typeof navigator !== 'undefined' && navigator.vibrate) {
+            navigator.vibrate([200, 100, 200]);
+        }
+    }
+  }, [stats.total]);
 
   const handleTextParse = async () => {
     if (!pasteText.trim()) return;
@@ -386,18 +400,61 @@ export function PersistentTripCostWidget() {
       )}
 
       {/* Totals Section */}
-      <div className="border-t border-white/10 pt-3 flex justify-between items-end mt-1">
-        <div className="text-[10px] text-slate-500 max-w-[110px] leading-tight flex items-start gap-1">
-          <Info className="w-3 h-3 shrink-0 mt-0.5" />
-          Average itinerary + parsed receipts
+      <div className="border-t border-white/10 pt-3 mt-1 space-y-4">
+        <div className="h-32 w-full">
+           <ResponsiveContainer width="100%" height="100%">
+             <BarChart data={[
+               { name: 'Budget', value: 5000 },
+               { name: 'Actual', value: stats.total }
+             ]}>
+               <XAxis dataKey="name" hide />
+               <YAxis hide />
+               <Tooltip 
+                 contentStyle={{ backgroundColor: '#020617', borderColor: '#334155', fontSize: '10px' }}
+                 itemStyle={{ color: '#fff' }}
+                 cursor={{ fill: 'transparent' }}
+               />
+               <Bar dataKey="value" radius={[4, 4, 0, 0]}>
+                 <Cell fill="#64748b" />
+                 <Cell fill={stats.total > 5000 ? '#f43f5e' : '#10b981'} />
+               </Bar>
+             </BarChart>
+           </ResponsiveContainer>
         </div>
-        <div className="text-right">
-          <span className="text-[10px] text-slate-400 uppercase font-black block">Total</span>
-          <span className="text-xl font-black text-emerald-400 font-mono">
-            {currency.symbol}{Math.round(stats.total).toLocaleString()}
-          </span>
+
+        <div className="flex justify-between items-end">
+          <div className="text-[10px] text-slate-500 max-w-[110px] leading-tight flex items-start gap-1">
+            <Info className="w-3 h-3 shrink-0 mt-0.5" />
+            Comparison: Budget vs Actual
+          </div>
+          <div className="text-right">
+            <span className="text-[10px] text-slate-400 uppercase font-black block">Total</span>
+            <span className="text-xl font-black text-emerald-400 font-mono">
+              {currency.symbol}{Math.round(stats.total).toLocaleString()}
+            </span>
+          </div>
         </div>
       </div>
+      
+      {/* Budget Toast */}
+      <AnimatePresence>
+        {showBudgetToast && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 20 }}
+            className="fixed bottom-32 left-4 right-4 z-[300] bg-rose-950/90 border border-rose-500/50 text-white p-4 rounded-xl shadow-lg flex items-center justify-between"
+          >
+             <div className="flex items-center gap-2">
+               <Wallet className="w-5 h-5 text-rose-400" />
+               <span className="text-xs font-bold">80% of daily budget reached!</span>
+             </div>
+             <button onClick={() => setShowBudgetToast(false)} className="text-slate-400">
+               <X className="w-4 h-4" />
+             </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </motion.div>
   );
 }
