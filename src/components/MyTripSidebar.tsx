@@ -171,10 +171,10 @@ export function MyTripSidebar({ isOpen, onClose }: { isOpen: boolean; onClose: (
             exit={isNarrow ? { y: '100%', x: 0 } : { x: '100%', y: 0 }}
             transition={{ type: 'spring', damping: 26, stiffness: 210 }}
             className={cn(
-              "fixed bg-[#0c0e12]/95 backdrop-blur-2xl border-white/10 z-[190] flex flex-col shadow-[0_0_50px_rgba(0,0,0,0.8)] pointer-events-auto",
+              "fixed vanti-glass z-[190] flex flex-col shadow-[0_0_50px_rgba(0,0,0,0.8)] pointer-events-auto",
               isNarrow 
-                ? "bottom-0 left-0 right-0 h-[80vh] w-full rounded-t-[32px] border-t" 
-                : "top-0 right-0 h-full w-full md:w-[390px] border-l"
+                ? "bottom-0 left-0 right-0 h-[80vh] w-full rounded-t-[32px] border-t border-white/10" 
+                : "top-0 right-0 h-full w-full md:w-[390px] border-l border-white/10"
             )}
           >
             {/* Drag Handle for Bottom Sheet on mobile */}
@@ -187,11 +187,11 @@ export function MyTripSidebar({ isOpen, onClose }: { isOpen: boolean; onClose: (
             {/* Header */}
             <div className="p-6 border-b border-white/5 flex items-center justify-between bg-white/[0.01]">
               <div>
-                <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                  <Sparkles className="w-5 h-5 text-rose-500 animate-pulse" />
+                <h2 className="text-xl font-bold text-white flex items-center gap-2 font-display">
+                  <Sparkles className="w-5 h-5 text-rose-500 animate-pulse-soft" />
                   {t('planner.title')}
                 </h2>
-                <p className="text-xs text-slate-500 mt-1">{t('planner.subtitle')}</p>
+                <p className="text-[10px] text-slate-500 mt-1 uppercase tracking-widest font-mono font-bold">{t('planner.subtitle')}</p>
               </div>
               <div className="flex items-center gap-2">
                 <motion.button
@@ -199,7 +199,7 @@ export function MyTripSidebar({ isOpen, onClose }: { isOpen: boolean; onClose: (
                   whileTap={{ scale: 0.95 }}
                   onClick={() => setShowAddForm(!showAddForm)}
                   className={cn(
-                    "p-2.5 rounded-xl border transition-all flex items-center gap-1 text-xs font-bold uppercase tracking-wider",
+                    "p-2.5 rounded-2xl border transition-all flex items-center gap-1 text-[10px] font-black uppercase tracking-wider",
                     showAddForm 
                       ? "bg-slate-800 text-white border-slate-700" 
                       : "bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border-rose-500/20"
@@ -208,7 +208,7 @@ export function MyTripSidebar({ isOpen, onClose }: { isOpen: boolean; onClose: (
                 >
                   <Plus className="w-4 h-4" />
                 </motion.button>
-                <CloseButton onClick={onClose} isAbsolute={false} className="border-white/5" />
+                <CloseButton onClick={onClose} isAbsolute={false} className="border-white/5 rounded-2xl" />
               </div>
             </div>
 

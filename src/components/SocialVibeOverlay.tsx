@@ -16,6 +16,12 @@ export function SocialVibeOverlay() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ lat: userLocation?.lat, lng: userLocation?.lng })
         });
+        
+        if (!response.ok) {
+           console.warn(`Vibe fetch failed with status: ${response.status}`);
+           return;
+        }
+        
         const data = await response.json();
         setVibe(data);
       } catch (e) {

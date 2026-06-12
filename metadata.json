@@ -1,6 +1,6 @@
 {
   "name": "VANTi UI 3.0",
-  "description": "A high-performance location engine with immersive 3D simulations, real-time weather atmospherics, and cinematic flight modes.",
+  "description": "VANTi: A spatial trip engine featuring real-time Area Vibe intelligence, 3D immersive simulations, and generative AI travel architecture.",
   "requestFramePermissions": [
     "geolocation",
     "camera",

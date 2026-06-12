@@ -118,6 +118,13 @@ export default function Chatbot({ onMapCommand, isVisible = true }: { onMapComma
              headers: { 'Content-Type': 'application/json' },
              body: JSON.stringify({ prompt: userMessage })
          });
+         
+         if (!videoReq.ok) {
+             setMessages(prev => [...prev, { role: 'assistant', text: 'Intelligence quota exceeded for video generation. Please try later.' }]);
+             setIsLoading(false);
+             return;
+         }
+         
          const { operationName } = await videoReq.json();
          
          if (!operationName) {

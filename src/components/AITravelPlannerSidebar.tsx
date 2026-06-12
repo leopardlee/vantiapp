@@ -41,6 +41,7 @@ export function AITravelPlannerSidebar() {
   const recenterToUser = useVantiStore((state) => state.recenterToUser);
   const viewportLandmarks = useVantiStore((state) => state.viewportLandmarks || []);
   const setActiveSmartItinerary = useVantiStore((state) => state.setActiveSmartItinerary);
+  const currentAreaVibe = useVantiStore((state) => state.currentAreaVibe);
   const t = useVantiStore((state) => state.t);
 
   // Navigational tab state
@@ -145,7 +146,8 @@ export function AITravelPlannerSidebar() {
         body: JSON.stringify({
           viewport: viewportParam,
           interests: selectedInterests,
-          days: days
+          days: days,
+          areaVibe: currentAreaVibe ? `${currentAreaVibe.vibeTag}: ${currentAreaVibe.description}` : undefined
         })
       });
 
@@ -274,12 +276,12 @@ export function AITravelPlannerSidebar() {
             initial={isNarrow ? { y: '100%', x: 0 } : { x: '100%', y: 0 }}
             animate={isNarrow ? { y: 0, x: 0 } : { x: 0, y: 0 }}
             exit={isNarrow ? { y: '100%', x: 0 } : { x: '100%', y: 0 }}
-            transition={{ type: 'spring', damping: 26, stiffness: 210 }}
+            transition={{ type: 'spring', damping: 28, stiffness: 220 }}
             className={cn(
-              "fixed bg-[#0c0e12]/95 backdrop-blur-2xl border-white/10 z-[190] flex flex-col shadow-[0_0_50px_rgba(0,0,0,0.8)] pointer-events-auto font-sans",
+              "fixed vanti-glass z-[190] flex flex-col shadow-2xl pointer-events-auto font-sans",
               isNarrow 
-                ? "bottom-0 left-0 right-0 h-[80vh] w-full rounded-t-[32px] border-t" 
-                : "top-0 right-0 h-full w-full md:w-[410px] border-l"
+                ? "bottom-0 left-0 right-0 h-[85vh] w-full rounded-t-[32px] border-t border-white/10" 
+                : "top-0 right-0 h-full w-full md:w-[410px] border-l border-white/10"
             )}
           >
             {/* Drag Handle for Bottom Sheet on mobile */}
@@ -290,20 +292,20 @@ export function AITravelPlannerSidebar() {
             )}
 
             {/* Header */}
-            <div className="p-6 border-b border-white/5 bg-white/[0.01]">
+            <div className="p-6 border-b border-white/5 backdrop-blur-3xl">
               <div className="flex items-center justify-between">
                 <div>
-                  <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                    <Sparkles className="w-5 h-5 text-purple-400 animate-pulse" />
-                    VANTi Intelligent AI
+                  <h2 className="text-xl font-black text-white flex items-center gap-2 font-display tracking-tight uppercase">
+                    <Sparkles className="w-5 h-5 text-rose-500 animate-pulse-soft" />
+                    VANTi AI
                   </h2>
-                  <p className="text-xs text-slate-400 mt-0.5">Gemini-powered viewport exploration</p>
+                  <span className="text-[9px] text-white/30 font-mono tracking-widest uppercase">SPATIAL ARCHITECT ENGINE</span>
                 </div>
                 <motion.button 
                   whileHover={{ scale: 1.1 }}
                   whileTap={{ scale: 0.9 }}
                   onClick={() => setShowAITripSidebar(false)}
-                  className="p-2 rounded-xl hover:bg-white/5 text-slate-400 hover:text-white transition-all border border-white/5"
+                  className="p-2.5 rounded-2xl hover:bg-white/5 text-white/60 hover:text-white transition-all border border-white/5"
                 >
                   <X className="w-5 h-5" />
                 </motion.button>
@@ -314,8 +316,8 @@ export function AITravelPlannerSidebar() {
                 <button
                   onClick={() => setAITab('itinerary')}
                   className={cn(
-                    "py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5",
-                    aiTab === 'itinerary' ? "bg-purple-600 border-purple-500 text-white shadow-md shadow-purple-600/10" : "text-slate-400 hover:text-white"
+                    "py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-1.5",
+                    aiTab === 'itinerary' ? "bg-rose-500 text-white shadow-lg" : "text-white/40 hover:text-white"
                   )}
                 >
                   <Calendar className="w-3.5 h-3.5" />
@@ -324,8 +326,8 @@ export function AITravelPlannerSidebar() {
                 <button
                   onClick={() => setAITab('radar')}
                   className={cn(
-                    "py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5",
-                    aiTab === 'radar' ? "bg-purple-600 border-purple-500 text-white shadow-md shadow-purple-600/10" : "text-slate-400 hover:text-white"
+                    "py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-1.5",
+                    aiTab === 'radar' ? "bg-rose-500 text-white shadow-lg" : "text-white/40 hover:text-white"
                   )}
                 >
                   <Compass className="w-3.5 h-3.5" />
@@ -334,8 +336,8 @@ export function AITravelPlannerSidebar() {
                 <button
                   onClick={() => setAITab('archive')}
                   className={cn(
-                    "py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5",
-                    aiTab === 'archive' ? "bg-purple-600 border-purple-500 text-white shadow-md shadow-purple-600/10" : "text-slate-400 hover:text-white"
+                    "py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-1.5",
+                    aiTab === 'archive' ? "bg-rose-500 text-white shadow-lg" : "text-white/40 hover:text-white"
                   )}
                 >
                   <Archive className="w-3.5 h-3.5" />
@@ -346,6 +348,25 @@ export function AITravelPlannerSidebar() {
 
             {/* Content Core Scroll Area */}
             <div className="flex-1 overflow-y-auto min-h-0 custom-scrollbar p-6 space-y-6">
+              
+              {/* Context Awareness HUD */}
+              {aiTab === 'itinerary' && currentAreaVibe && (
+                <motion.div 
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="p-4 rounded-2xl bg-rose-500/5 border border-rose-500/10 flex items-start gap-4"
+                >
+                  <div className="w-8 h-8 rounded-xl bg-rose-500/10 flex items-center justify-center border border-rose-500/20 shrink-0">
+                    <Sparkles className="w-4 h-4 text-rose-500 animate-pulse-soft" />
+                  </div>
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-[10px] font-black text-rose-500 uppercase tracking-widest font-mono">MAP CONTEXT DETECTED</span>
+                    <p className="text-[12px] text-white/70 font-medium leading-tight">
+                      Architecting for <span className="text-white font-black">{currentAreaVibe.vibeTag}</span> atmosphere.
+                    </p>
+                  </div>
+                </motion.div>
+              )}
               
               {/* TAB 3: ARCHIVE */}
               {aiTab === 'archive' && (

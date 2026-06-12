@@ -20,6 +20,11 @@ export function AITravelLog() {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ image: base64, location: userLocation })
                 });
+                
+                if (!response.ok) {
+                    throw new Error(`Server returned ${response.status}`);
+                }
+                
                 const { narrative } = await response.json();
                 console.log("Narrative generated:", narrative);
                 // Store narrative in Firebase: requires Firestore skill, need to implement.

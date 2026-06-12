@@ -1,33 +1,52 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 @import "tailwindcss";
 
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-display: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  @keyframes scanline {
+    from { transform: translateY(-100%); }
+    to { transform: translateY(100%); }
+  }
+
+  @keyframes ping-slow {
+    0% { transform: scale(1) rotate(45deg); opacity: 0.8; }
+    100% { transform: scale(1.5) rotate(45deg); opacity: 0; }
+  }
 }
 
 :root {
   --vanti-bg: #0f1115;
   --vanti-text: #f1f5f9;
   --vanti-accent: #6366f1;
+  --vanti-glass-border: rgba(255, 255, 255, 0.08);
+  --vanti-glass-glow: rgba(99, 102, 241, 0.15);
 }
 
 .mood-minimalist {
   --vanti-bg: #ffffff;
   --vanti-text: #1e293b;
   --vanti-accent: #475569;
+  --vanti-glass-border: rgba(0, 0, 0, 0.05);
+  --vanti-glass-glow: rgba(71, 85, 105, 0.05);
 }
 
 .mood-vibrant {
   --vanti-bg: #fff7ed;
   --vanti-text: #7c2d12;
   --vanti-accent: #ea580c;
+  --vanti-glass-border: rgba(234, 88, 12, 0.1);
+  --vanti-glass-glow: rgba(234, 88, 12, 0.05);
 }
 
 .mood-noir {
   --vanti-bg: #000000;
   --vanti-text: #ffffff;
   --vanti-accent: #ffffff;
+  --vanti-glass-border: rgba(255, 255, 255, 0.15);
+  --vanti-glass-glow: rgba(255, 255, 255, 0.05);
 }
 
 body {
@@ -38,7 +57,9 @@ body {
   color: var(--vanti-text);
   height: 100vh;
   height: calc(var(--vh, 1vh) * 100);
-  transition: background-color 0.5s ease, color 0.5s ease;
+  transition: background-color 0.8s cubic-bezier(0.4, 0, 0.2, 1), color 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+  font-feature-settings: "cv02", "cv03", "cv04", "ss01";
+  -webkit-font-smoothing: antialiased;
 }
 
 #root {
@@ -47,6 +68,34 @@ body {
 
 .InteractionOverlayRoot {
   pointer-events: none;
+}
+
+/* --- Vanti Precision Interface Engine --- */
+
+.vanti-glass {
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  background: linear-gradient(135deg, rgba(23, 27, 36, 0.72), rgba(15, 18, 24, 0.85));
+  border: 1px solid var(--vanti-glass-border);
+  box-shadow: 
+    0 4px 32px 0 rgba(0, 0, 0, 0.5),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.02);
+}
+
+.vanti-card {
+  @apply relative overflow-hidden transition-all duration-500;
+  background: rgba(23, 27, 36, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.vanti-card::after {
+  content: "";
+  @apply absolute inset-0 opacity-0 transition-opacity duration-700 pointer-events-none;
+  background: radial-gradient(600px circle at var(--mouse-x) var(--mouse-y), rgba(255,255,255,0.06), transparent 40%);
+}
+
+.vanti-card:hover::after {
+  @apply opacity-100;
 }
 
 /* WOW UI Effects */
@@ -58,79 +107,70 @@ body {
   animation: shimmer 2s infinite;
 }
 
-@keyframes pulse-slow {
+@keyframes pulse-soft {
   0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.8; transform: scale(1.05); }
+  50% { opacity: 0.85; transform: scale(1.02); }
 }
 
-.animate-pulse-slow {
-  animation: pulse-slow 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+.animate-pulse-soft {
+  animation: pulse-soft 4s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
-@keyframes wow-float {
-  0%, 100% { transform: translateY(0) scale(1); }
-  50% { transform: translateY(-10px) scale(1.02); }
+@keyframes vanti-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
 }
 
-.animate-wow-float {
-  animation: wow-float 6s ease-in-out infinite;
+.animate-vanti-float {
+  animation: vanti-float 8s ease-in-out infinite;
 }
 
-@keyframes wow-scanline {
+@keyframes scanline-subtle {
   0% { transform: translateY(-100%); }
-  100% { transform: translateY(100vh); }
+  100% { transform: translateY(100%); }
 }
 
-.animate-wow-scanline {
-  animation: wow-scanline 8s linear infinite;
-}
-
-@keyframes wow-glow {
-  0%, 100% { filter: drop-shadow(0 0 15px rgba(99, 102, 241, 0.5)); }
-  50% { filter: drop-shadow(0 0 35px rgba(168, 85, 247, 0.8)); }
-}
-
-.animate-wow-glow {
-  animation: wow-glow 4s ease-in-out infinite;
+.vanti-scanline {
+  @apply absolute inset-0 pointer-events-none opacity-[0.03] overflow-hidden;
+  background: linear-gradient(to bottom, transparent, rgba(255, 255, 255, 0.5), transparent);
+  height: 2px;
+  animation: scanline-subtle 4s linear infinite;
 }
 
 .glass-vignette {
-  background: radial-gradient(circle at center, transparent 30%, rgba(0,0,0,0.8) 150%);
+  background: radial-gradient(circle at center, transparent 40%, rgba(0,0,0,0.6) 140%);
   pointer-events: none;
 }
 
-.glass-lens {
-  backdrop-filter: blur(8px) saturate(180%);
-  -webkit-backdrop-filter: blur(8px) saturate(180%);
-  background: linear-gradient(135deg, rgba(255,255,255,0.1), rgba(255,255,255,0.0));
-  border: 1px solid rgba(255,255,255,0.18);
-  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
-}
-
-.magic-lens-view {
-  clip-path: circle(120px at var(--mouse-x) var(--mouse-y));
-  backdrop-filter: blur(12px) contrast(120%) saturate(200%);
-  z-index: 50;
-  pointer-events: none;
-  transition: opacity 0.3s;
-}
-
-.InteractionOverlayRoot button,
-.InteractionOverlayRoot input,
-.InteractionOverlayRoot textarea,
-.InteractionOverlayRoot select,
-.InteractionOverlayRoot a,
-.InteractionOverlayRoot [role="button"],
-.InteractionOverlayRoot .pointer-events-auto,
-.InteractionOverlayRoot .pointer-events-auto * {
-  pointer-events: auto;
-}
-
+/* Scrollbar Refinement */
 .scrollbar-none::-webkit-scrollbar {
   display: none;
 }
 .scrollbar-none {
-  -ms-overflow-style: none; /* IE and Edge */
-  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.vanti-scrollbar::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+.vanti-scrollbar::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.02);
+}
+.vanti-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+}
+.vanti-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* Safe Area Utility */
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+.pt-safe {
+  padding-top: env(safe-area-inset-top, 0px);
 }
 

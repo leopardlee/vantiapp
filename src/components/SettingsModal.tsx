@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Settings, Shield, Globe, Ruler, Map, Check, LogIn, AlertCircle, Cpu, Terminal, Palette, Cloud, Bell, BellOff, Zap, BookOpen, History as HistoryIcon } from 'lucide-react';
+import { Settings, Shield, Globe, Ruler, Map, Check, LogIn, AlertCircle, Cpu, Terminal, Palette, Cloud, Bell, BellOff, Zap, BookOpen, History as HistoryIcon, Github } from 'lucide-react';
 import { CloseButton } from './CloseButton';
 import FocusLock from 'react-focus-lock';
 import { useVantiStore } from '../store/vantiStore';
 import { cn } from '../lib/utils';
-import { auth, db, loginWithGoogle } from '../lib/firebase';
+import { auth, db, loginWithGoogle, loginWithGithub, logout } from '../lib/firebase';
 import { doc, setDoc } from 'firebase/firestore';
 import { useNotifications } from '../hooks/useNotifications';
 
@@ -296,6 +296,56 @@ export default function SettingsModal({
                     {language === 'ko' && <Check className="w-3.5 h-3.5 stroke-[2.5]" />}
                     한국어
                   </button>
+                </div>
+              </div>
+
+              {/* Authentication Status & GitHub Sync */}
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 px-1">
+                  <Shield className="w-4 h-4 text-indigo-400" />
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{language === 'en' ? 'Account Sync' : '계정 동기화'}</span>
+                </div>
+                <div className="space-y-2">
+                  {!user ? (
+                    <div className="grid grid-cols-1 gap-2">
+                      <button
+                        onClick={async () => {
+                          try { await loginWithGoogle(); } catch(e) { console.error(e); }
+                        }}
+                        className="w-full py-3 px-4 rounded-xl bg-white text-slate-900 text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 active:scale-[0.98] transition-all"
+                      >
+                         <LogIn className="w-4 h-4" />
+                         Login with Google
+                      </button>
+                      <button
+                        onClick={async () => {
+                          try { await loginWithGithub(); } catch(e) { console.error(e); }
+                        }}
+                        className="w-full py-3 px-4 rounded-xl bg-slate-800 text-white text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 active:scale-[0.98] transition-all"
+                      >
+                         <Github className="w-4 h-4" />
+                         Login with GitHub
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="p-4 rounded-2xl bg-[#0d1017]/80 border border-white/5 space-y-4">
+                       <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <img src={user.photoURL || `https://api.dicebear.com/7.x/shapes/svg?seed=${user.uid}`} className="w-8 h-8 rounded-full border border-white/10" alt="avatar" />
+                            <div>
+                               <p className="text-[11px] font-black text-white truncate max-w-[120px]">{user.displayName || user.email}</p>
+                               <p className="text-[8px] text-slate-500 font-bold uppercase tracking-widest leading-none mt-0.5">Secure Session</p>
+                            </div>
+                          </div>
+                          <button 
+                            onClick={() => logout()}
+                            className="bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 p-2 rounded-lg text-[9px] font-black uppercase tracking-widest"
+                          >
+                            Logout
+                          </button>
+                       </div>
+                    </div>
+                  )}
                 </div>
               </div>
 

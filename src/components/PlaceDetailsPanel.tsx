@@ -228,6 +228,7 @@ const PlaceDetailsPanel = React.memo(function PlaceDetailsPanel({ place, onBack,
         })
       });
       
+      if (!res.ok) throw new Error(`Status ${res.status}`);
       const data = await res.json();
       if (data.script) {
         const utterance = new SpeechSynthesisUtterance(data.script);
@@ -306,6 +307,7 @@ const PlaceDetailsPanel = React.memo(function PlaceDetailsPanel({ place, onBack,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ location: locationName })
       });
+      if (!response.ok) throw new Error(`Status ${response.status}`);
       const data = await response.json();
       setLocalGuideData(data);
     } catch (e) {
@@ -542,6 +544,7 @@ const PlaceDetailsPanel = React.memo(function PlaceDetailsPanel({ place, onBack,
                 } 
             })
         });
+        if (!res.ok) throw new Error(`Status ${res.status}`);
         const data = await res.json();
         setTripItinerary(data.itinerary || []);
     } catch(err) {

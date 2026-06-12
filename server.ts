@@ -1,5 +1,6 @@
 import { WebSocketServer } from "ws";
 import express from "express";
+import session from "express-session";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, GenerateVideosOperation, Type, FunctionDeclaration } from "@google/genai";
@@ -32,6 +33,17 @@ async function startServer() {
   const PORT = 3000;
   
   app.use(express.json());
+  
+  // session for OAuth state
+  app.use(session({
+    secret: process.env.SESSION_SECRET || 'vanti-geo-secret',
+    resave: false,
+    saveUninitialized: true,
+    cookie: { 
+      secure: process.env.NODE_ENV === 'production', 
+      sameSite: 'none' 
+    }
+  }));
 
   // Initialize Gemini
   const ai = new GoogleGenAI({ 
@@ -609,6 +621,179 @@ Respond ONLY in JSON.
     } catch (err: any) {
       console.log("Atmospheric filter error:", err);
       res.json({ filter: 'default' });
+    }
+  });
+
+  // Area Vibe Deep Analysis
+  app.post("/api/area-vibe", async (req, res) => {
+    try {
+      const { lat, lng, pois, context } = req.body;
+      const prompt = `
+        You are an urban sociologist and travel tastemaker. Analyze the following location and its surrounding points of interest:
+        Coordinates: (${lat}, ${lng})
+        Nearby Places: ${JSON.stringify(pois || [])}
+        Current Context: ${context || 'General exploration'}
+
+        Task:
+        1. Identify the 'soul' or 'vibe' of this specific neighborhood or area.
+        2. Generate a 3-word "Vibe Tag" (e.g. "Industrial Chic Zenith", "Quiet Garden Sanctuary", "Neon Cyberpunk Hub").
+        3. Write a 1-sentence poetic description of the atmospheric tone and energy of this precise area.
+        4. Suggest the single best activity to do here right now.
+
+        Respond ONLY in raw JSON:
+        {
+          "vibeTag": "string",
+          "description": "string",
+          "activity": "string",
+          "intensity": number (0.1 to 1.0)
+        }
+      `;
+
+      const response = await generateContentWithFallback({
+        model: 'gemini-3.5-flash',
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json"
+        }
+      });
+
+      const textResponse = response.text || "{}";
+      try {
+        const parsed = JSON.parse(textResponse);
+        res.json(parsed);
+      } catch (parseErr) {
+        console.warn("Failed to parse vibe JSON, might be raw text fallback:", textResponse);
+        if (textResponse.includes("Rate exceeded")) {
+           return res.status(429).send("Rate exceeded");
+        }
+        throw parseErr;
+      }
+    } catch (err: any) {
+      console.log("Area Vibe Error:", err);
+      // Fail gracefully with simulated data
+      res.json({ 
+        vibeTag: "Active Urban Core", 
+        description: "A high-energy intersection of modern infrastructure and local culture.",
+        activity: "Local venue exploration",
+        intensity: 0.6
+      });
+    }
+  });
+
+  // Github OAuth & Upload logic
+  app.get('/api/auth/github/url', (req, res) => {
+    const clientId = process.env.GITHUB_CLIENT_ID;
+    if (!clientId) {
+      return res.status(500).json({ error: 'GITHUB_CLIENT_ID not configured' });
+    }
+    const redirectUri = `${req.protocol}://${req.get('host')}/api/auth/github/callback`;
+    const url = `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=public_repo`;
+    res.json({ url });
+  });
+
+  app.get('/api/auth/github/callback', async (req, res) => {
+    const { code } = req.query;
+    const clientId = process.env.GITHUB_CLIENT_ID;
+    const clientSecret = process.env.GITHUB_CLIENT_SECRET;
+
+    if (!code || !clientId || !clientSecret) {
+      return res.status(400).send('Missing params for GitHub OAuth');
+    }
+
+    try {
+      const tokenRes = await fetch('https://github.com/login/oauth/access_token', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({
+          client_id: clientId,
+          client_secret: clientSecret,
+          code
+        })
+      });
+      const tokenData = await tokenRes.json();
+      
+      if (tokenData.access_token) {
+        // Store in session (simplified for this applet)
+        (req.session as any).githubToken = tokenData.access_token;
+        
+        res.send(`
+          <html>
+            <body>
+              <script>
+                if (window.opener) {
+                  window.opener.postMessage({ type: 'GITHUB_AUTH_SUCCESS' }, '*');
+                  window.close();
+                } else {
+                  window.location.href = '/';
+                }
+              </script>
+              <p>Authentication successful. You can close this window.</p>
+            </body>
+          </html>
+        `);
+      } else {
+        res.status(401).send('Failed to get GitHub token: ' + JSON.stringify(tokenData));
+      }
+    } catch (err) {
+      res.status(500).send('GitHub auth error: ' + String(err));
+    }
+  });
+
+  app.post('/api/github/upload', async (req, res) => {
+    const token = (req.session as any).githubToken;
+    if (!token) {
+      return res.status(401).json({ error: 'Not authenticated with GitHub' });
+    }
+
+    const { filename, content, message, repo } = req.body;
+    if (!filename || !content || !repo) {
+       return res.status(400).json({ error: 'Missing data for upload' });
+    }
+
+    try {
+      // 1. Get user info
+      const userRes = await fetch('https://api.github.com/user', {
+        headers: { 'Authorization': `token ${token}` }
+      });
+      const userData = await userRes.json();
+      const login = userData.login;
+
+      // 2. Try to get existing file sha to update if exists
+      const fileUrl = `https://api.github.com/repos/${login}/${repo}/contents/${filename}`;
+      let sha;
+      const getFileRes = await fetch(fileUrl, {
+        headers: { 'Authorization': `token ${token}` }
+      });
+      if (getFileRes.ok) {
+        const fileData = await getFileRes.json();
+        sha = fileData.sha;
+      }
+
+      // 3. Put content
+      const putRes = await fetch(fileUrl, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `token ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          message: message || 'Upload from VANTi',
+          content: Buffer.from(content).toString('base64'),
+          sha
+        })
+      });
+
+      if (putRes.ok) {
+        res.json({ success: true, url: `https://github.com/${login}/${repo}/blob/main/${filename}` });
+      } else {
+        const errData = await putRes.json();
+        res.status(putRes.status).json({ error: errData.message });
+      }
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
     }
   });
 

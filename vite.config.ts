@@ -14,13 +14,25 @@ export default defineConfig(() => {
       reportCompressedSize: false,
       rollupOptions: {
         output: {
-          manualChunks: {
-            'vendor-react': ['react', 'react-dom', 'motion', 'zustand'],
-            'vendor-maps': ['@vis.gl/react-google-maps', '@googlemaps/markerclusterer'],
-            'vendor-ai-core': ['@xenova/transformers'],
-            'vendor-firebase': ['firebase/app', 'firebase/auth', 'firebase/firestore'],
-            'vendor-viz': ['recharts', 'd3'],
-            'vendor-ui': ['lucide-react', 'clsx', 'tailwind-merge'],
+          manualChunks: (id) => {
+            if (id.includes('node_modules')) {
+              if (id.includes('react') || id.includes('motion') || id.includes('zustand')) {
+                return 'vendor-core'; // Priority high for interactivity
+              }
+              if (id.includes('@vis.gl') || id.includes('@googlemaps')) {
+                return 'vendor-maps';
+              }
+              if (id.includes('@xenova')) {
+                return 'vendor-ai-core'; // Heavy, and non-essential for initial shell
+              }
+              if (id.includes('firebase')) {
+                return 'vendor-firebase';
+              }
+              if (id.includes('d3') || id.includes('recharts')) {
+                return 'vendor-viz';
+              }
+              return 'vendor-misc';
+            }
           }
         }
       }
@@ -30,7 +42,7 @@ export default defineConfig(() => {
         '@': path.resolve(__dirname, '.'),
       },
     },
-    base: './',
+    base: '/',
     server: {
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
       // Do not modifyâfile watching is disabled to prevent flickering during agent edits.

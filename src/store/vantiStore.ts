@@ -129,6 +129,13 @@ export interface VantiState {
   markers: any[];
   weatherData: any | null;
   timePhase: string | null;
+  currentAreaVibe: {
+    vibeTag: string;
+    description: string;
+    activity: string;
+    intensity: number;
+  } | null;
+  isVibeLoading: boolean;
 }
 
 export interface VantiActions {
@@ -205,6 +212,8 @@ export interface VantiActions {
   setMarkers: (markers: any[]) => void;
   setWeatherData: (weatherData: any | null) => void;
   setTimePhase: (timePhase: string | null) => void;
+  setCurrentAreaVibe: (vibe: any | null) => void;
+  setIsVibeLoading: (loading: boolean) => void;
 }
 
 type VantiStore = VantiState & VantiActions;
@@ -354,8 +363,12 @@ export const useVantiStore = create<VantiStore>()(
       setMarkers: (markers) => set({ markers }),
       weatherData: null,
       timePhase: 'day',
+      currentAreaVibe: null,
+      isVibeLoading: false,
       setWeatherData: (weatherData) => set({ weatherData }),
       setTimePhase: (timePhase) => set({ timePhase }),
+      setCurrentAreaVibe: (currentAreaVibe) => set({ currentAreaVibe }),
+      setIsVibeLoading: (isVibeLoading) => set({ isVibeLoading }),
       addCustomMarker: (marker) => set((state) => ({ customMarkers: [...state.customMarkers, marker] })),
       removeCustomMarker: (id) => set((state) => ({ customMarkers: state.customMarkers.filter(m => m.id !== id) })),
       toggleBookmark: (place) => set((state) => {

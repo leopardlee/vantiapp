@@ -8,7 +8,7 @@
     "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
     "preview": "vite preview",
     "start": "node dist/server.cjs",
-    "clean": "rm -rf dist server.js",
+    "clean": "rm -rf dist",
     "lint": "tsc --noEmit && tsx src/harness/runClickabilityCli.ts"
   },
   "dependencies": {
@@ -20,6 +20,7 @@
     "@google/genai": "^2.4.0",
     "@googlemaps/markerclusterer": "^2.6.2",
     "@tailwindcss/vite": "^4.1.14",
+    "@types/express-session": "^1.19.0",
     "@vis.gl/react-google-maps": "^1.8.3",
     "@vitejs/plugin-react": "^5.0.4",
     "@xenova/transformers": "^2.17.2",
@@ -27,6 +28,7 @@
     "d3": "^7.9.0",
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
+    "express-session": "^1.19.0",
     "firebase": "^12.14.0",
     "firebase-admin": "^13.10.0",
     "i18next": "^26.3.1",

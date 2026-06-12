@@ -1,5 +1,5 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
-import { getAuth, GoogleAuthProvider, FacebookAuthProvider, OAuthProvider, signInWithPopup, signOut } from "firebase/auth";
+import { getAuth, GoogleAuthProvider, FacebookAuthProvider, GithubAuthProvider, OAuthProvider, signInWithPopup, signOut } from "firebase/auth";
 import { initializeFirestore, doc, getDocFromServer, collection, setDoc, query, where, getDocs, deleteDoc } from "firebase/firestore";
 import { getMessaging, getToken, onMessage, Messaging } from "firebase/messaging";
 import firebaseConfig from "../../firebase-applet-config.json";
@@ -12,6 +12,7 @@ export const db = initializeFirestore(app, {
 
 export const googleProvider = new GoogleAuthProvider();
 export const facebookProvider = new FacebookAuthProvider();
+export const githubProvider = new GithubAuthProvider();
 export const appleProvider = new OAuthProvider('apple.com');
 export const kakaoProvider = new OAuthProvider('oidc.kakao'); // Standard OIDC id if configured, or can fallback
 
@@ -138,6 +139,16 @@ export const loginWithKakao = async () => {
         return result.user;
     } catch (error) {
         console.error("Firebase Kakao login failed", error);
+        throw error;
+    }
+};
+
+export const loginWithGithub = async () => {
+    try {
+        const result = await signInWithPopup(auth, githubProvider);
+        return result.user;
+    } catch (error) {
+        console.error("Firebase Github login failed", error);
         throw error;
     }
 };

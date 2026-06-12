@@ -28,6 +28,11 @@ export default function AILogPanel({ onClose }: { onClose?: () => void }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ favorites: combinedFavorites })
       });
+      
+      if (!response.ok) {
+        throw new Error(`Server returned ${response.status}`);
+      }
+      
       const data = await response.json();
       setSummary(data.summary);
     } catch (err) {

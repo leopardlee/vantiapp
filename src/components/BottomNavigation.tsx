@@ -68,17 +68,17 @@ export const BottomNavigation = React.memo(function BottomNavigation() {
       icon: Compass,
       active: activeMode === 'all' && !isChatbotOpen,
       onClick: (e: React.MouseEvent) => filterDispatch('all', e),
-      activeColor: 'bg-white text-black shadow-[0_0_20px_rgba(255,255,255,0.35)] shadow-inner',
-      inactiveColor: 'text-slate-400 hover:text-white hover:bg-white/5'
+      activeColor: 'bg-white text-black shadow-[0_0_25px_rgba(255,255,255,0.4)]',
+      inactiveColor: 'text-white/40 hover:text-white hover:bg-white/5'
     },
     {
       id: 'route',
-      label: 'Route',
+      label: 'Plan',
       icon: Navigation,
       active: activeMode === 'planner' && !isChatbotOpen,
       onClick: (e: React.MouseEvent) => filterDispatch('planner', e),
-      activeColor: 'bg-indigo-500 text-white shadow-[0_0_25px_rgba(99,102,241,0.5)] border-t border-indigo-400/50',
-      inactiveColor: 'text-slate-400 hover:text-white hover:bg-white/5'
+      activeColor: 'bg-rose-500 text-white shadow-[0_0_25px_rgba(244,63,94,0.5)]',
+      inactiveColor: 'text-white/40 hover:text-white hover:bg-white/5'
     },
     {
       id: 'ai',
@@ -91,17 +91,17 @@ export const BottomNavigation = React.memo(function BottomNavigation() {
         triggerHaptic('success');
         setIsChatbotOpen(true);
       },
-      activeColor: 'bg-gradient-to-br from-indigo-500 to-purple-600 text-white shadow-[0_0_30px_rgba(99,102,241,0.75)] border border-indigo-400 animate-pulse-subtle scale-110 -translate-y-2',
-      inactiveColor: 'bg-gradient-to-br from-indigo-500/80 to-purple-600/80 hover:from-indigo-500 hover:to-purple-600 text-white border border-indigo-500/30 shadow-lg -translate-y-1 hover:scale-110 hover:-translate-y-2'
+      activeColor: 'bg-gradient-to-br from-rose-500 to-indigo-600 text-white shadow-[0_0_30px_rgba(244,63,94,0.6)] border border-rose-400 scale-110 -translate-y-2',
+      inactiveColor: 'bg-white/5 hover:bg-white/10 text-white/60 border border-white/5 -translate-y-1 hover:scale-110 hover:-translate-y-2'
     },
     {
       id: 'nodes',
-      label: 'Society',
+      label: 'Link',
       icon: Users,
       active: activeMode === 'profile' && !isChatbotOpen,
       onClick: (e: React.MouseEvent) => filterDispatch('profile', e),
-      activeColor: 'bg-violet-600 text-white shadow-[0_0_25px_rgba(124,58,237,0.5)] border-t border-violet-400/50',
-      inactiveColor: 'text-slate-400 hover:text-white hover:bg-white/5'
+      activeColor: 'bg-indigo-600 text-white shadow-[0_0_25px_rgba(79,70,229,0.5)]',
+      inactiveColor: 'text-white/40 hover:text-white hover:bg-white/5'
     },
     {
       id: 'settings',
@@ -109,23 +109,19 @@ export const BottomNavigation = React.memo(function BottomNavigation() {
       icon: Settings,
       active: isSettingsOpen,
       onClick: handleSettingsClick,
-      activeColor: 'bg-slate-700 text-white shadow-[0_0_20px_rgba(255,255,255,0.15)] border-t border-slate-600/50',
-      inactiveColor: 'text-slate-400 hover:text-white hover:bg-white/5'
+      activeColor: 'bg-white/20 text-white shadow-[0_0_20px_rgba(255,255,255,0.1)]',
+      inactiveColor: 'text-white/40 hover:text-white hover:bg-white/5'
     }
   ];
 
   return (
     <motion.div 
       initial={{ opacity: 1, y: 0 }}
-      animate={{ opacity: isMapDragging ? 0 : 1, y: isMapDragging ? 50 : 0 }}
-      transition={{ duration: 0.3, ease: "easeOut" }}
-      className="BottomNavigation bg-[#0f1117]/90 backdrop-blur-3xl border border-white/10 rounded-[2.5rem] flex items-center justify-around md:justify-center transition-all duration-300 hover:border-white/20 select-none w-full max-w-[460px] shadow-[0_20px_50px_rgba(0,0,0,0.65),inset_0_1px_1px_rgba(255,255,255,0.15)] relative pointer-events-auto" 
-      style={{ 
-        padding: `${8 * paddingFactor}px ${12 * paddingFactor}px`,
-        gap: `${4 * paddingFactor}px`
-      }}
+      animate={{ opacity: isMapDragging ? 0 : 1, y: isMapDragging ? 80 : 0 }}
+      transition={{ duration: 0.4, ease: [0.4, 0, 0.2, 1] }}
+      className="BottomNavigation vanti-glass rounded-full flex items-center justify-around md:justify-center transition-all duration-300 w-full max-w-[420px] shadow-2xl relative pointer-events-auto mb-6 mx-auto sm:mx-0 p-1 font-sans border-white/10 h-16 sm:h-18"
     >
-      <div className="absolute inset-0 rounded-[2.5rem] border border-white/5 pointer-events-none mix-blend-overlay" />
+      <div className="absolute inset-x-0 bottom-[-20px] h-24 bg-gradient-to-t from-black/40 to-transparent pointer-events-none -z-10 blur-xl" />
       
       {tabs.map((tab) => {
         const Icon = tab.icon;
@@ -137,28 +133,26 @@ export const BottomNavigation = React.memo(function BottomNavigation() {
             onClick={tab.onClick} 
             title={tab.label}
             whileHover={{ scale: isCenterButton ? 1.15 : 1.05 }}
-            whileTap={{ scale: 1.15 }}
-            transition={{ type: "spring", stiffness: 400, damping: 10 }}
+            whileTap={{ scale: 0.92 }}
+            transition={{ type: "spring", stiffness: 500, damping: 15 }}
             className={cn(
-              "flex-1 md:flex-none rounded-full transition-all touch-manipulation flex flex-col items-center justify-center min-w-[52px] min-h-[52px] relative cursor-pointer group focus:outline-none focus:ring-2 focus:ring-white/10", 
+              "flex-1 md:flex-none rounded-full transition-all touch-manipulation flex flex-col items-center justify-center min-w-[50px] min-h-[50px] relative cursor-pointer group focus:outline-none", 
               tab.active ? tab.activeColor : tab.inactiveColor
             )}
             style={{ 
-              padding: isCenterButton 
-                ? `${12 * paddingFactor}px` 
-                : `${14 * paddingFactor}px`,
+              padding: isCenterButton ? "0" : "0",
+              height: isCenterButton ? "56px" : "48px",
+              width: isCenterButton ? "56px" : "48px",
+              margin: isCenterButton ? "0 4px" : "0"
             }}
           >
-            {/* Extended Touch Target Overlay (Transparent padding for accessibility) */}
-            <span className="absolute -inset-2 rounded-full pointer-events-none" />
-
             <Icon style={{ 
-              width: isCenterButton ? `${24 * scaleFactor}px` : `${20 * scaleFactor}px`, 
-              height: isCenterButton ? `${24 * scaleFactor}px` : `${20 * scaleFactor}px` 
-            }} className="shrink-0" />
+              width: isCenterButton ? `${22 * scaleFactor}px` : `${18 * scaleFactor}px`, 
+              height: isCenterButton ? `${22 * scaleFactor}px` : `${18 * scaleFactor}px` 
+            }} className={cn("shrink-0", isCenterButton && "animate-pulse-soft")} />
             
             {!isCenterButton && (
-              <span className="text-[7px] font-black uppercase tracking-[0.2em] scale-90 opacity-0 group-hover:opacity-100 transition-opacity absolute bottom-1 leading-none text-white pt-1">
+              <span className="text-[8px] font-black uppercase tracking-[0.15em] scale-90 opacity-0 group-hover:opacity-100 transition-all absolute bottom-1.5 leading-none text-current">
                 {tab.label}
               </span>
             )}

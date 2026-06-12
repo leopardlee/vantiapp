@@ -73,6 +73,7 @@ import { DestinationBriefingModal } from './DestinationBriefingModal';
 import { useBreadcrumb } from '../hooks/useBreadcrumb';
 import { useLocalSuggestions } from '../hooks/useLocalSuggestions';
 import { BreadcrumbLayer } from './BreadcrumbLayer';
+import { useViewportLayoutManager } from '../hooks/useViewportLayoutManager';
 
 import { MINIMALIST_STYLE, TERRAIN_FOCUSED_STYLE, HIGH_CONTRAST_STYLE } from '../lib/mapStyles';
 import { auth, loginWithGoogle, logout, db } from '../lib/firebase';
@@ -87,8 +88,8 @@ import { useVantiStore, VantiState, MapAesthetic } from '../store/vantiStore';
 import { getTranslation } from '../lib/translations';
 import { pipeline } from '@xenova/transformers';
 
-const MAP_ID = 'DEMO_MAP_ID'; // Using standard demo ID for reliable vector map features
-const DEFAULT_CENTER = { lat: 37.5665, lng: 126.9780 }; // Seoul, Korea
+const MAP_ID = (import.meta as any).env.VITE_GOOGLE_MAP_ID || 'DEMO_MAP_ID';
+const DEFAULT_CENTER = { lat: 37.5665, lng: 126.9780 };
 
 type HapticType = 'tap' | 'switch' | 'close' | 'open_panel' | 'save' | 'mode3d' | 'impact' | 'success';
 
@@ -405,6 +406,7 @@ const WeatherCenterOverlay = React.memo(({ lat, lng }: { lat: number; lng: numbe
       setLoading(true);
       try {
         const res = await fetch(`/api/weather/openweathermap/${lat.toFixed(4)}/${lng.toFixed(4)}`);
+        if (!res.ok) throw new Error(`Status ${res.status}`);
         const data = await res.json();
         if (active) {
           setCurrentWeatherData(data);
@@ -916,60 +918,68 @@ const BuzzMarker = React.memo(({
   types?: string[];
   name?: string;
 }) => {
-  // Local Buzz is derived from rating counts and social signals
   const buzz = userRatingCount || 0;
-  // Map buzz to a color spectrum (Indigo/Blue -> Rose/Amber)
+  const isHighBuzz = buzz > 1200;
   const hue = Math.min(350, 210 + (Math.sqrt(buzz) / 10) * 14); 
-  const vibrancy = Math.min(100, 60 + (buzz / 1000) * 40);
-  const opacity = Math.min(1, 0.7 + (buzz / 5000));
-  const glow = isSelected ? 15 : Math.min(8, (buzz / 1000) * 4);
   
   const IconComponent = getIconForType(types, name);
-  const emojiStr = getEmojiForPlace(types, name);
 
   return (
     <div className="relative group/buzz flex flex-col items-center">
-      <div 
-        className="w-10 h-10 rounded-full flex items-center justify-center relative drop-shadow-2xl transition-all duration-300 group"
-        style={{ 
-          backgroundColor: '#0f172a',
-          border: `2px solid hsla(${hue}, ${vibrancy}%, 50%, ${opacity})`,
-          filter: `drop-shadow(0 0 ${glow}px hsla(${hue}, ${vibrancy}%, 50%, 0.6))`
+      <motion.div 
+        animate={{ 
+          scale: isSelected ? 1.2 : 1,
+          y: isSelected ? -8 : 0
         }}
+        className="relative"
       >
-        <div 
-          className={cn("absolute inset-1 rounded-full", isSelected && "animate-pulse")}
-          style={{ backgroundColor: `hsla(${hue}, ${vibrancy}%, 40%, 0.2)` }}
-        />
-        <div className={cn("text-slate-200 z-10 flex items-center justify-center", isSelected ? "animate-bounce" : "")}>
-          {IconComponent ? <IconComponent className="w-5 h-5" /> : <MapPin className="w-5 h-5" />}
-        </div>
-        <div 
-          className="absolute -bottom-1 w-2 h-2 rounded-full z-20 shadow-md"
-          style={{ backgroundColor: mode === 'social' ? '#f43f5e' : mode === 'genius' ? '#f59e0b' : mode === 'perks' ? '#10b981' : '#6366f1' }}
-        />
-        
-        {/* Pointer Base */}
-        <div 
-          className="absolute -bottom-2.5 w-3 h-3 rotate-45 border-r-[2px] border-b-[2px] z-[-1]"
-          style={{ 
-            backgroundColor: '#0f172a',
-            borderColor: `hsla(${hue}, ${vibrancy}%, 50%, ${opacity})`
-          }}
-        />
-      </div>
-      
-      {/* Local Buzz Indicator */}
-      {buzz > 800 && (
-        <div 
-          className="absolute -top-1 -right-1 px-1 py-0.5 rounded-full bg-slate-950 border border-white/20 flex items-center gap-0.5 shadow-lg scale-75"
-          style={{ borderColor: `hsla(${hue}, ${vibrancy}%, 50%, 0.4)` }}
-        >
-          <Zap className="w-2 h-2 text-amber-400 fill-amber-400" />
-          <span className="text-[6px] font-black text-white uppercase leading-none">Buzz</span>
-        </div>
-      )}
+        {/* Hexagonal Precision Frame */}
+        <div className={cn(
+          "w-12 h-12 flex items-center justify-center relative transition-all duration-500",
+          isSelected ? "opacity-100" : "opacity-90"
+        )}>
+           {/* Outer Ring / Glow */}
+           <div 
+             className="absolute inset-0 rounded-xl rotate-45 border-2 border-white/10 blur-[2px]"
+             style={{ borderColor: isSelected ? 'rgba(244, 63, 94, 0.4)' : '' }}
+           />
+           
+           {/* Inner Core */}
+           <div className={cn(
+             "w-10 h-10 rounded-xl rotate-45 flex items-center justify-center relative overflow-hidden backdrop-blur-xl border border-white/20",
+             isSelected ? "bg-rose-500/20 border-rose-500/40" : "bg-slate-950/80"
+           )}>
+              {/* Scanline Effect */}
+              <div className="absolute inset-0 bg-[linear-gradient(transparent_0%,rgba(255,255,255,0.05)_50%,transparent_100%)] bg-[size:100%_4px] animate-scanline pointer-events-none" />
+              
+              {/* Icon - Rotated back to normal */}
+              <div className="-rotate-45 relative z-10">
+                {IconComponent ? (
+                  <IconComponent className={cn("w-5 h-5", isSelected ? "text-white" : "text-white/70")} />
+                ) : (
+                  <MapPin className={cn("w-5 h-5", isSelected ? "text-white" : "text-white/70")} />
+                )}
+              </div>
+           </div>
 
+           {/* Pulse Ring for high buzz */}
+           {isHighBuzz && (
+             <div className="absolute inset-0 rounded-xl rotate-45 border border-rose-500/40 animate-ping-slow" />
+           )}
+        </div>
+
+        {/* Small Status Tag */}
+        {isHighBuzz && (
+          <div className="absolute -top-1 -right-1 bg-rose-500 px-1 py-0.5 rounded-sm flex items-center gap-0.5 shadow-lg">
+            <Zap className="w-2 h-2 text-white fill-white" />
+            <span className="text-[6px] font-black text-white uppercase tracking-tighter">BUZZ</span>
+          </div>
+        )}
+      </motion.div>
+      
+      {/* Anchor Point */}
+      <div className="w-1 h-1 bg-white/20 rounded-full mt-1 blur-[1px]" />
+      
       <WeatherOverlay weather={activeWeather} />
     </div>
   );
@@ -982,6 +992,7 @@ import { FinancialTelemetry } from './FinancialTelemetry';
 import AILogPanel from './AILogPanel';
 
 const VantiMap = React.memo(function VantiMap() {
+  useViewportLayoutManager();
   const { timePhase } = useThemeManager();
   const map = useMap();
   const { stats: prefStats, markLoaded } = usePerformanceMonitor();
@@ -1121,6 +1132,7 @@ const VantiMap = React.memo(function VantiMap() {
                         vibe: travelMood 
                     })
                 });
+                if (!response.ok) throw new Error(`Status ${response.status}`);
                 const filtered = await response.json();
                 useVantiStore.setState({ markers: filtered });
             } catch (err) {
@@ -1138,6 +1150,7 @@ const VantiMap = React.memo(function VantiMap() {
   }, [isVibeModeActive, travelMood]);
   const isGaussianActive = useVantiStore((state) => state.isGaussianActive);
   const setIsGaussianActive = useVantiStore((state) => state.setIsGaussianActive);
+  const mapViewport = useVantiStore((state) => state.mapViewport);
   const [isMapIdle, setIsMapIdle] = useState(false);
   const [expandedClusterId, setExpandedClusterId] = useState<string | null>(null);
   const [hoveredClusterId, setHoveredClusterId] = useState<string | null>(null);
@@ -1508,6 +1521,24 @@ const VantiMap = React.memo(function VantiMap() {
       }
     }
   }, [hapticIntensity]);
+
+  useEffect(() => {
+    if (!map) return;
+    
+    const center = map.getCenter();
+    if (!center) return;
+    const currentLoc = { lat: center.lat(), lng: center.lng() };
+
+    if (is3DActive) {
+      // Cinematic Sweep to 3D
+      triggerHaptic('mode3d');
+      animateFlyTo(map, currentLoc, 18.2, 55, 45, 1200);
+    } else {
+      // Return to Overview
+      triggerHaptic('switch');
+      animateFlyTo(map, currentLoc, 14.5, 0, 0, 1000);
+    }
+  }, [is3DActive, map, triggerHaptic]);
 
   // Automated Solar Positioning, Weather Theme Management, and Auto-Language Sync
   useEffect(() => {
@@ -2369,6 +2400,7 @@ const VantiMap = React.memo(function VantiMap() {
             searchHistory: user ? recentSearches.map(r => r.query) : localRecentSearches
           })
         });
+        if (!res.ok) throw new Error(`Status ${res.status}`);
         const data = await res.json();
         if (data.trending) {
           setTrendingDestinations(data.trending);
@@ -2608,11 +2640,26 @@ const VantiMap = React.memo(function VantiMap() {
     }
   }, [userLocation]);
 
-  // Filter local mock points based on activeMode and category
+  // Explicit Map Lifecycle Cleanup
+  useEffect(() => {
+    return () => {
+      console.log("[Vanti Map Lifecycle] Nullifying Google Map references and clearing clusterers...");
+      if (markerClustererRef.current) {
+        markerClustererRef.current.clearMarkers();
+        markerClustererRef.current = null;
+      }
+      // Note: we don't nullify the map from @vis.gl as it handles its own unmount,
+      // but we ensure all our custom references are released.
+      if (window.google?.maps?.event) {
+        window.google.maps.event.clearInstanceListeners(window);
+      }
+    };
+  }, []);
+
   const [activeCollection, setActiveCollection] = useState<string | null>(null);
 
   const filteredMockPlaces = useMemo(() => {
-    // Priority 1: Collection Filter
+    // Spatial Indexing / Virtualization Layer: Only process points within a generous buffer of the current viewport
     let rawList = SEOUL_MOCK_PLACES;
     if (activeCollection) {
       if (activeCollection === 'canada_working_holiday') {
@@ -2623,6 +2670,21 @@ const VantiMap = React.memo(function VantiMap() {
           (activeCollection === 'dua_lipa_seoul' && (p.rating > 4.2 || p.matchScore > 90))
         );
       }
+    }
+
+    // Apply Viewport Virtualization
+    if (mapViewport?.bounds) {
+      const { north, south, east, west } = mapViewport.bounds;
+      // Add a 20% spatial padding to prevent markers popping at edges
+      const paddingLat = (north - south) * 0.2;
+      const paddingLng = (east - west) * 0.2;
+      
+      rawList = rawList.filter(p => 
+        p.lat >= (south - paddingLat) && 
+        p.lat <= (north + paddingLat) && 
+        p.lng >= (west - paddingLng) && 
+        p.lng <= (east + paddingLng)
+      );
     }
 
     // Apply Active Marker Category Filters
@@ -2655,10 +2717,30 @@ const VantiMap = React.memo(function VantiMap() {
       const matchesCategory = selectedCategory === 'All' || (p.types && p.types.some(t => t.toLowerCase() === selectedCategory.toLowerCase()));
       return matchesMode && matchesCategory;
     });
-  }, [activeMode, selectedCategory, activeCollection, activeMarkerFilters, travelMood]);
+  }, [activeMode, selectedCategory, activeCollection, activeMarkerFilters, travelMood, mapViewport]);
 
   const filteredPlaces = useMemo(() => {
-    let list = places.filter(place => matchesCategoryFilter(place.types, selectedCategory));
+    let list = places;
+    
+    // Apply Viewport Virtualization
+    if (mapViewport?.bounds) {
+      const { north, south, east, west } = mapViewport.bounds;
+      const paddingLat = (north - south) * 0.15;
+      const paddingLng = (east - west) * 0.15;
+      
+      list = list.filter(p => {
+        if (!p.location) return false;
+        const lat = typeof (p.location as any).lat === 'function' ? (p.location as any).lat() : (p.location as any).lat;
+        const lng = typeof (p.location as any).lng === 'function' ? (p.location as any).lng() : (p.location as any).lng;
+        
+        return lat >= (south - paddingLat) && 
+               lat <= (north + paddingLat) && 
+               lng >= (west - paddingLng) && 
+               lng <= (east + paddingLng);
+      });
+    }
+
+    list = list.filter(place => matchesCategoryFilter(place.types, selectedCategory));
 
     // Apply Active Marker Category Filters
     if (!activeMarkerFilters.includes('all')) {
@@ -3414,11 +3496,11 @@ const VantiMap = React.memo(function VantiMap() {
 
   return (
     <div 
-      className="relative w-full h-screen bg-[#0a0c10] overflow-hidden select-none text-slate-100 font-sans"
+      className="relative w-full bg-[#0a0c10] overflow-hidden select-none text-slate-100 font-sans"
       style={{ 
         fontSize: `${16 * accessibilityScale}px`,
-        height: '100vh',
-        minHeight: '100%',
+        height: 'calc(var(--vh, 1vh) * 100)',
+        minHeight: 'calc(var(--vh, 1vh) * 100)',
         width: '100%'
       } as React.CSSProperties}
     >
@@ -3736,8 +3818,7 @@ const VantiMap = React.memo(function VantiMap() {
             minTilt: 0,
             rotateControl: true,
             tiltControl: true,
-            keyboardShortcuts: true,
-            styles: MAP_ID ? undefined : getActiveMapStyle()
+            keyboardShortcuts: true
           }}
           internalUsageAttributionIds={['gmp_mcp_codeassist_v1_aistudio']}
           className="absolute inset-0 w-full h-full"
@@ -6649,5 +6730,59 @@ const VantiMap = React.memo(function VantiMap() {
     </div>
   );
 });
+
+// --- HUD Components for Global Shell ---
+
+export function SpatialTelemetry() {
+  const mapViewport = useVantiStore((state) => state.mapViewport);
+  const [isHovered, setIsHovered] = useState(false);
+  
+  if (!mapViewport?.center) return null;
+
+  const { lat, lng } = mapViewport.center;
+
+  return (
+    <motion.div 
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+      className="vanti-glass px-4 py-2 rounded-2xl flex items-center gap-4 border-white/5 shadow-none backdrop-blur-3xl group cursor-default"
+    >
+      <div className="flex flex-col gap-0.5">
+        <span className="text-[8px] font-black text-rose-500 uppercase tracking-widest font-mono group-hover:animate-pulse">SPATIAL COORDS</span>
+        <div className="flex items-center gap-3">
+          <div className="flex items-baseline gap-1">
+            <span className="text-[10px] font-bold text-white/40 font-mono">LAT</span>
+            <span className="text-[12px] font-black text-white font-mono tracking-tighter">
+              {lat.toFixed(6)}
+            </span>
+          </div>
+          <div className="w-[1px] h-3 bg-white/10" />
+          <div className="flex items-baseline gap-1">
+            <span className="text-[10px] font-bold text-white/40 font-mono">LNG</span>
+            <span className="text-[12px] font-black text-white font-mono tracking-tighter">
+              {lng.toFixed(6)}
+            </span>
+          </div>
+        </div>
+      </div>
+      
+      <AnimatePresence>
+        {isHovered && (
+          <motion.div
+            initial={{ width: 0, opacity: 0 }}
+            animate={{ width: 'auto', opacity: 1 }}
+            exit={{ width: 0, opacity: 0 }}
+            className="overflow-hidden flex items-center gap-3 border-l border-white/10 pl-3"
+          >
+             <div className="flex flex-col gap-0.5">
+                <span className="text-[8px] font-black text-emerald-400 uppercase tracking-widest font-mono">ELEVATION</span>
+                <span className="text-[12px] font-black text-white font-mono">124M MSL</span>
+             </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
+  );
+}
 
 export default VantiMap;

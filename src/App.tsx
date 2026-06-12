@@ -6,6 +6,7 @@ import { BottomNavigation } from './components/BottomNavigation';
 import { FriendsLocationListener } from './components/FriendsLocationListener';
 import { useRecenterToUser, useVantiStore } from './store/vantiStore';
 import { useLocationSharing } from './hooks/useLocationSharing';
+import { useViewportLayoutManager } from './hooks/useViewportLayoutManager';
 import { ViewportProvider } from './lib/ViewportContext';
 import { WowExperienceLayer } from './components/WowExperienceLayer';
 import { ControlCluster } from './components/ControlCluster';
@@ -49,7 +50,7 @@ const getSafeApiKey = (): string => {
 const API_KEY = getSafeApiKey();
 const hasValidKey = Boolean(API_KEY) && API_KEY !== 'YOUR_API_KEY';
 
-function ApiMapWrapper() {
+function MapReadyBoundary() {
   const status = useApiLoadingStatus();
   const setIsInitializing = useVantiStore((state) => state.setIsInitializing);
 
@@ -61,7 +62,10 @@ function ApiMapWrapper() {
 
   if (status === APILoadingStatus.LOADING) {
     return (
-      <div className="flex flex-col items-center justify-center p-10 h-screen w-full bg-[#0a0c10] text-slate-100 font-sans z-[1001]">
+      <div 
+        className="flex flex-col items-center justify-center p-10 w-full bg-[#0a0c10] text-slate-100 font-sans z-[1001]"
+        style={{ height: 'calc(var(--vh, 1vh) * 100)' }}
+      >
         <div className="relative flex items-center justify-center w-36 h-36 rounded-full border border-rose-500/10 mb-6">
           <div className="absolute inset-4 rounded-full border border-dashed border-rose-500/20 animate-spin" style={{ animationDuration: '8s' }} />
           <div className="absolute w-8 h-8 rounded-full border-2 border-slate-500 border-t-rose-500 animate-spin" />
@@ -74,7 +78,10 @@ function ApiMapWrapper() {
 
   if (status === APILoadingStatus.FAILED || status === APILoadingStatus.AUTH_FAILURE) {
     return (
-      <div className="flex flex-col items-center justify-center p-10 h-screen w-full bg-[#0a0c10] text-slate-100 font-sans z-[1001]">
+      <div 
+        className="flex flex-col items-center justify-center p-10 w-full bg-[#0a0c10] text-slate-100 font-sans z-[1001]"
+        style={{ height: 'calc(var(--vh, 1vh) * 100)' }}
+      >
         <div className="relative flex items-center justify-center w-36 h-36 rounded-full border border-rose-500/25 mb-6">
           <div className="absolute w-12 h-12 rounded-full bg-rose-500/10 border border-rose-500/30 flex items-center justify-center text-rose-500">
             <svg className="w-5 h-5 stroke-current" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -90,10 +97,14 @@ function ApiMapWrapper() {
     );
   }
 
+  // Only mount the heavy VantiMap component when API is confirmed ready
   return <VantiMap />;
 }
 
 export default function App() {
+  // Initialize dynamic viewport height manager
+  useViewportLayoutManager();
+
   // Trigger automatic recentering on first successful browser geolocation on launch
   useRecenterToUser();
   useLocationSharing();
@@ -110,7 +121,10 @@ export default function App() {
   const mapElement = useMemo(() => {
     if (!hasValidKey) {
       return (
-        <div className="flex flex-col items-center justify-center p-10 text-slate-500 h-screen w-full bg-slate-900/50">
+        <div 
+          className="flex flex-col items-center justify-center p-10 text-slate-500 w-full bg-slate-900/50"
+          style={{ height: 'calc(var(--vh, 1vh) * 100)' }}
+        >
           <span className="text-[10px] font-black tracking-widest text-[#f43f5e] uppercase mb-2">MAP ENVIRONMENT UNConfigured</span>
           <span className="text-[8px] font-mono tracking-widest uppercase text-slate-400">Map loading restricted (API Key missing)</span>
         </div>
@@ -118,7 +132,7 @@ export default function App() {
     }
     return (
       <APIProvider key={language} apiKey={API_KEY} version="weekly" language={language}>
-        <ApiMapWrapper />
+        <MapReadyBoundary />
       </APIProvider>
     );
   }, [language]);

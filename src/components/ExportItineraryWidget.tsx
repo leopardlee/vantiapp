@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Share2, FileJson, Camera, X, Loader2 } from 'lucide-react';
+import { Share2, FileJson, Camera, X, Loader2, Github } from 'lucide-react';
 import { useVantiStore } from '../store/vantiStore';
 import { collection, query, where, orderBy, getDocs } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
@@ -12,12 +12,27 @@ export function ExportItineraryWidget() {
   const [exportData, setExportData] = useState<any>(null);
   const bookmarkedPlaces = useVantiStore(state => state.bookmarkedPlaces);
 
+  const [isGithubUploading, setIsGithubUploading] = useState(false);
+  const [githubRepo, setGithubRepo] = useState('vanti-travels');
+  const [uploadStatus, setUploadStatus] = useState<string | null>(null);
+
   // When global state asks us to open, load data!
   React.useEffect(() => {
     if (isExportModalOpen && !exportData && !isExporting) {
       handleExport();
     }
   }, [isExportModalOpen]);
+
+  // Listen for GitHub Auth message
+  React.useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+        if (event.data?.type === 'GITHUB_AUTH_SUCCESS') {
+            handleGithubUpload();
+        }
+    };
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, [exportData]);
 
   const handleExport = async () => {
     setIsExporting(true);
@@ -72,6 +87,45 @@ export function ExportItineraryWidget() {
     document.body.appendChild(downloadAnchorNode); // required for firefox
     downloadAnchorNode.click();
     downloadAnchorNode.remove();
+  };
+
+  const handleGithubUpload = async () => {
+    if (!exportData) return;
+    setIsGithubUploading(true);
+    setUploadStatus("Connecting...");
+    try {
+        const uploadRes = await fetch('/api/github/upload', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                filename: `Itinerary_${Date.now()}.json`,
+                content: JSON.stringify(exportData, null, 2),
+                repo: githubRepo,
+                message: `Exported itinerary from VANTi: ${exportData.date}`
+            })
+        });
+
+        if (uploadRes.status === 401) {
+            // Not authed, trigger logic
+            setUploadStatus("Login required...");
+            const urlRes = await fetch('/api/auth/github/url');
+            const { url } = await urlRes.json();
+            window.open(url, 'github_oauth', 'width=600,height=700');
+        } else if (uploadRes.ok) {
+            const data = await uploadRes.json();
+            setUploadStatus("Success!");
+            setTimeout(() => setUploadStatus(null), 3000);
+            window.open(data.url, '_blank');
+        } else {
+            const err = await uploadRes.json();
+            setUploadStatus(`Error: ${err.error}`);
+        }
+    } catch (err) {
+        console.error(err);
+        setUploadStatus("Failed to upload");
+    } finally {
+        setIsGithubUploading(false);
+    }
   };
 
   return (
@@ -159,6 +213,14 @@ export function ExportItineraryWidget() {
                   >
                      <FileJson className="w-4 h-4" />
                      JSON 내보내기
+                  </button>
+                  <button 
+                    onClick={handleGithubUpload}
+                    disabled={isGithubUploading}
+                    className="flex-1 bg-slate-900 hover:bg-slate-800 text-white py-3 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2"
+                  >
+                     {isGithubUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Github className="w-4 h-4" />}
+                     {uploadStatus || 'GitHub 업로드'}
                   </button>
                </div>
              </div>
